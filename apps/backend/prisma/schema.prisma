@@ -1,0 +1,314 @@
+// Sistema Loteria Dominicana - aligned to supabase_migrations/0001_core.sql
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DrawState {
+  scheduled
+  open
+  closed
+  posteado
+  @@map("draw_state")
+}
+
+enum ResultStatus {
+  pending_approval
+  approved
+  rejected
+  @@map("result_status")
+}
+
+enum TicketStatus {
+  sold
+  voided
+  paid
+  @@map("ticket_status")
+}
+
+enum LimitType {
+  global
+  by_number
+  by_bet_type
+  @@map("limit_type")
+}
+
+enum BetType {
+  quiniela
+  pale
+  tripleta
+  superpale
+  @@map("bet_type")
+}
+
+model Role {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  code       String   @unique
+  name       String
+  createdAt  DateTime @default(now()) @map("created_at")
+  userRoles  UserRole[]
+  @@map("roles")
+}
+
+model User {
+  id            String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  email         String    @unique
+  phone         String?   @unique
+  fullName      String    @map("full_name")
+  passwordHash  String    @map("password_hash")
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  userRoles     UserRole[]
+  pointAssignments PointAssignment[]
+  ticketsSold   Ticket[]  @relation("SellerTickets")
+  ticketsVoided Ticket[]  @relation("VoidedByUser")
+  ticketsPaid   Ticket[]  @relation("PaidByUser")
+  drawResultsEntered DrawResult[] @relation("EnteredBy")
+  drawResultsApproved DrawResult[] @relation("ApprovedBy")
+  refreshTokens RefreshToken[]
+  auditLogs    AuditLog[]
+  posPresence   PosPresence[]
+  @@map("users")
+}
+
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Lottery {
+  id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name            String
+  code            String    @unique
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  drawTimes       LotteryDrawTime[]
+  draws           Draw[]
+  ticketLines     TicketLine[]
+  limitConfigs    LimitConfig[]
+  @@map("lotteries")
+}
+
+model LotteryDrawTime {
+  id                   String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  lotteryId            String   @map("lottery_id") @db.Uuid
+  drawTime             String   @map("draw_time")
+  closeMinutesBefore   Int      @default(0) @map("close_minutes_before")
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  lottery              Lottery  @relation(fields: [lotteryId], references: [id], onDelete: Cascade)
+  @@unique([lotteryId, drawTime])
+  @@map("lottery_draw_times")
+}
+
+model Game {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name      String
+  code      String
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("games")
+}
+
+model Draw {
+  id         String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  lotteryId  String      @map("lottery_id") @db.Uuid
+  drawDate   DateTime    @map("draw_date") @db.Date
+  drawTime   String      @map("draw_time")
+  state      DrawState   @default(scheduled)
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+  lottery    Lottery     @relation(fields: [lotteryId], references: [id], onDelete: Cascade)
+  ticketLines TicketLine[]
+  drawResult DrawResult?
+  limitConfigs LimitConfig[]
+  @@index([lotteryId, drawDate])
+  @@map("draws")
+}
+
+model PosPoint {
+  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name         String
+  code         String    @unique
+  address      String?
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  pointAssignments PointAssignment[]
+  posDevices   PosDevice[]
+  tickets      Ticket[]
+  posPresence  PosPresence[]
+  @@map("pos_points")
+}
+
+model PointAssignment {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  pointId           String   @map("point_id") @db.Uuid
+  sellerUserId      String   @map("seller_user_id") @db.Uuid
+  commissionPercent Decimal  @default(0) @map("commission_percent") @db.Decimal(5, 2)
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  point             PosPoint @relation(fields: [pointId], references: [id], onDelete: Cascade)
+  user               User     @relation(fields: [sellerUserId], references: [id], onDelete: Cascade)
+  @@unique([pointId, sellerUserId])
+  @@map("point_assignments")
+}
+
+model PosDevice {
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  deviceId  String    @unique @map("device_id")
+  pointId   String    @map("point_id") @db.Uuid
+  name      String?
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  point     PosPoint  @relation(fields: [pointId], references: [id], onDelete: Cascade)
+  tickets   Ticket[]
+  presence  PosPresence?
+  @@map("pos_devices")
+}
+
+model PosPresence {
+  deviceId      String    @id @map("device_id")
+  pointId       String    @map("point_id") @db.Uuid
+  sellerUserId  String?   @map("seller_user_id") @db.Uuid
+  appVersion    String?   @map("app_version")
+  lastSeenAt    DateTime  @default(now()) @map("last_seen_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  device        PosDevice @relation(fields: [deviceId], references: [deviceId], onDelete: Cascade)
+  point         PosPoint  @relation(fields: [pointId], references: [id], onDelete: Cascade)
+  seller        User?     @relation(fields: [sellerUserId], references: [id], onDelete: SetNull)
+  @@index([lastSeenAt])
+  @@map("pos_presence")
+}
+
+model Ticket {
+  id           String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  ticketCode   String        @unique @map("ticket_code")
+  pointId      String        @map("point_id") @db.Uuid
+  deviceId     String        @map("device_id")
+  sellerUserId String        @map("seller_user_id") @db.Uuid
+  status       TicketStatus  @default(sold)
+  totalAmount  Decimal       @map("total_amount") @db.Decimal(12, 2)
+  printedAt    DateTime?     @map("printed_at")
+  voidedAt     DateTime?     @map("voided_at")
+  voidedById   String?       @map("voided_by") @db.Uuid
+  voidReason   String?       @map("void_reason")
+  paidAt       DateTime?     @map("paid_at")
+  paidById     String?       @map("paid_by") @db.Uuid
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  point        PosPoint      @relation(fields: [pointId], references: [id], onDelete: Restrict)
+  device       PosDevice     @relation(fields: [deviceId], references: [deviceId], onDelete: Restrict)
+  seller       User          @relation("SellerTickets", fields: [sellerUserId], references: [id], onDelete: Restrict)
+  voidedBy     User?         @relation("VoidedByUser", fields: [voidedById], references: [id], onDelete: SetNull)
+  paidBy       User?         @relation("PaidByUser", fields: [paidById], references: [id], onDelete: SetNull)
+  lines        TicketLine[]
+  @@index([pointId, createdAt])
+  @@index([sellerUserId, createdAt])
+  @@map("tickets")
+}
+
+model TicketLine {
+  id               String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  ticketId         String   @map("ticket_id") @db.Uuid
+  lotteryId        String   @map("lottery_id") @db.Uuid
+  drawId           String   @map("draw_id") @db.Uuid
+  betType          BetType  @map("bet_type")
+  numbers          String
+  amount           Decimal  @db.Decimal(12, 2)
+  potentialPayout  Decimal  @map("potential_payout") @db.Decimal(12, 2)
+  createdAt        DateTime @default(now()) @map("created_at")
+  ticket           Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  lottery          Lottery  @relation(fields: [lotteryId], references: [id], onDelete: Restrict)
+  draw             Draw     @relation(fields: [drawId], references: [id], onDelete: Restrict)
+  @@index([ticketId])
+  @@index([drawId])
+  @@map("ticket_lines")
+}
+
+model DrawResult {
+  id               String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  drawId           String        @unique @map("draw_id") @db.Uuid
+  status           ResultStatus  @default(pending_approval)
+  results          Json          @default("{}")
+  enteredById      String?       @map("entered_by") @db.Uuid
+  enteredAt        DateTime?     @map("entered_at")
+  approvedById     String?       @map("approved_by") @db.Uuid
+  approvedAt       DateTime?     @map("approved_at")
+  rejectionReason  String?       @map("rejection_reason")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+  draw             Draw          @relation(fields: [drawId], references: [id], onDelete: Cascade)
+  enteredBy        User?         @relation("EnteredBy", fields: [enteredById], references: [id], onDelete: SetNull)
+  approvedBy       User?         @relation("ApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  @@map("draw_results")
+}
+
+model LimitConfig {
+  id         String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  type       LimitType
+  lotteryId  String?    @map("lottery_id") @db.Uuid
+  drawId     String?    @map("draw_id") @db.Uuid
+  betType    BetType?
+  numberKey  String?    @map("number_key")
+  maxPayout  Decimal    @map("max_payout") @db.Decimal(14, 2)
+  active     Boolean    @default(true)
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+  lottery    Lottery?   @relation(fields: [lotteryId], references: [id], onDelete: Cascade)
+  draw       Draw?      @relation(fields: [drawId], references: [id], onDelete: Cascade)
+  @@index([lotteryId, drawId, type])
+  @@map("limit_configs")
+}
+
+model PayoutConfig {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  betType    BetType  @unique @map("bet_type")
+  multiplier Decimal @map("multiplier") @db.Decimal(12, 2)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  @@map("payout_config")
+}
+
+model RefreshToken {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  tokenHash  String   @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  action        String
+  entity        String
+  entityId      String?  @map("entity_id") @db.Uuid
+  meta          Json     @default("{}")
+  ip            String?
+  userAgent     String?  @map("user_agent")
+  createdAt     DateTime @default(now()) @map("created_at")
+  actor         User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  @@index([createdAt])
+  @@index([action])
+  @@index([entity])
+  @@index([actorUserId])
+  @@map("audit_logs")
+}

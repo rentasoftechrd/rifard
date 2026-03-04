@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rifard
+      POSTGRES_PASSWORD: rifard
+      POSTGRES_DB: rifard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://rifard:rifard@postgres:5432/rifard
+      JWT_SECRET: change-me-in-production-min-32-chars
+      REFRESH_SECRET: change-me-refresh-in-production-min-32
+      BANCO_TIMEZONE: America/Santo_Domingo
+      POS_HEARTBEAT_ONLINE_SECONDS: "60"
+    depends_on:
+      - postgres
+
+volumes:
+  pgdata:
