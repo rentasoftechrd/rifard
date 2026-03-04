@@ -37,6 +37,17 @@ async function bootstrap() {
     credentials: true,
   });
 
+  // Ruta raíz: la API está en /api/v1 (evita confusión al abrir http://IP:3000/ en el navegador)
+  const httpAdapter = app.getHttpAdapter().getInstance();
+  httpAdapter.get('/', (_req: unknown, res: { json: (body: object) => void }) => {
+    res.json({
+      name: 'Rifard Loteria API',
+      api: '/api/v1',
+      health: '/api/v1/health/pos-connect',
+      docs: '/api/docs',
+    });
+  });
+
   const port = process.env.PORT ?? 3000;
   const host = process.env.HOST ?? '0.0.0.0';
   await app.listen(port, host);

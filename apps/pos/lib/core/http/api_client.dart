@@ -5,6 +5,9 @@ import 'package:http/http.dart' as http;
 const _storageKey = 'rifard_access_token';
 const _baseUrlKey = 'rifard_base_url';
 
+/// URL por defecto del backend (VPS). Si el usuario no guardó ninguna, se usa esta.
+const kDefaultBaseUrl = 'http://187.124.81.201:3000';
+
 class ApiClient {
   ApiClient({http.Client? client, FlutterSecureStorage? storage})
       : _client = client ?? http.Client(),
@@ -33,19 +36,19 @@ class ApiClient {
   }
 
   Future<http.Response> get(String path, {Map<String, String>? queryParams}) async {
-    final base = await baseUrl ?? 'http://localhost:3000';
+    final base = await baseUrl ?? kDefaultBaseUrl;
     final uri = Uri.parse('$base/api/v1$path').replace(queryParameters: queryParams);
     return _client.get(uri, headers: await _headers());
   }
 
   Future<http.Response> post(String path, {Object? body}) async {
-    final base = await baseUrl ?? 'http://localhost:3000';
+    final base = await baseUrl ?? kDefaultBaseUrl;
     final uri = Uri.parse('$base/api/v1$path');
     return _client.post(uri, headers: await _headers(), body: body != null ? jsonEncode(body) : null);
   }
 
   Future<http.Response> put(String path, {Object? body}) async {
-    final base = await baseUrl ?? 'http://localhost:3000';
+    final base = await baseUrl ?? kDefaultBaseUrl;
     final uri = Uri.parse('$base/api/v1$path');
     return _client.put(uri, headers: await _headers(), body: body != null ? jsonEncode(body) : null);
   }

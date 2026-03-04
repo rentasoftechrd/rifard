@@ -171,9 +171,26 @@ Usa la contraseña de root que tienes en el panel del VPS (o restablece la contr
    ```
    Te pedirá la contraseña SSH (o usa `-SshKey "C:\ruta\a\id_rsa"`). El backend se instala en `~/rifard-backend` en el VPS (para evitar "permission denied" en `/opt`).
 
-   **Si sale "Permission denied":**
-   - **Al conectar por SSH:** prueba antes `ssh root@187.124.81.201` y revisa usuario/contraseña; si usas clave, ejecuta con `-SshKey "ruta\a\tu\clave_privada"`.
-   - **Al crear carpetas en el VPS:** el script ya usa `~/rifard-backend` por defecto; si aun así falla, indica otro directorio: `-AppDir "/root/rifard-backend"`.
+   **Si sigue "Permission denied" después de cambiar la contraseña:** suele ser que el VPS tiene desactivada la autenticación por contraseña. Haz lo siguiente **desde la consola web de Hostinger** (VPS → Open Web Terminal), así no dependes de SSH desde tu PC:
+
+   1. Entra al VPS por la **Web Terminal** de Hostinger (Overview del VPS → botón de terminal en el navegador).
+   2. Comprueba que la contraseña nueva funciona: cierra sesión y vuelve a entrar en la web terminal con la nueva clave.
+   3. Activa la autenticación por contraseña de SSH en el servidor:
+      ```bash
+      sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+      grep -q '^PasswordAuthentication ' /etc/ssh/sshd_config || echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+      systemctl reload ssh
+      ```
+   4. Vuelve a intentar desde tu PC: `ssh root@187.124.81.201` y luego el script de deploy.
+
+   **Alternativa sin contraseña (recomendada):** usar clave SSH. En la Web Terminal del VPS crea `~/.ssh/authorized_keys` y pega tu clave pública. En tu PC tienes la clave en `%USERPROFILE%\.ssh\id_ed25519.pub` (o `id_rsa.pub`). En la Web Terminal:
+      ```bash
+      mkdir -p ~/.ssh
+      echo "PEGA_AQUI_TU_CLAVE_PUBLICA" >> ~/.ssh/authorized_keys
+      chmod 700 ~/.ssh
+      chmod 600 ~/.ssh/authorized_keys
+      ```
+   Luego en tu PC ejecuta el script con `-SshKey "$env:USERPROFILE\.ssh\id_ed25519"`.
 
 5. **En el POS:** en la pantalla de login/configuración, pon como URL del backend:
    ```text
@@ -185,34 +202,35 @@ Usa la contraseña de root que tienes en el panel del VPS (o restablece la contr
 
 #### Desplegar desde el VPS (todo en el servidor)
 
-Si prefieres **subir/actualizar el backend haciendo todo desde el VPS** (sin usar el script desde tu PC):
+Haz **todo desde el VPS** usando la **Web Terminal** de Hostinger (no hace falta SSH desde tu PC). Orden recomendado:
 
-**1. Conectar por SSH**
-```bash
-ssh root@187.124.81.201
-```
+**1. Entrar a la Web Terminal**  
+En el panel de Hostinger → tu VPS → abrir la terminal en el navegador. Inicias sesión como root con tu contraseña.
 
-**2. Primera vez: instalar Node, npm, pm2 y git**
+**2. Instalar Node.js 20, npm, pm2 y git**
 ```bash
-apt update && apt install -y nodejs npm git
+apt update && apt install -y git
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
 npm install -g pm2
 ```
 
-**3. Clonar el repo (sustituye por la URL de tu repositorio)**
+**3. Clonar el repo**  
+Con token de GitHub (cuando pida password, pega el token):
 ```bash
 cd /root
-git clone https://github.com/TU_USUARIO/rifard.git
+git clone https://github.com/rentasoftechrd/rifard.git
 cd rifard/apps/backend
 ```
-Si no usas Git: sube desde tu PC la carpeta `apps/backend` (ZIP o rsync) y descomprímela en `/root/rifard/apps/backend`.
+Usuario: `rentasoftechrd`, contraseña: tu **Personal Access Token** de GitHub.
 
-**4. Crear el `.env` en la carpeta del backend**
+**4. Crear el `.env`**
 ```bash
 nano .env
 ```
-Pega el contenido (DATABASE_URL, JWT_SECRET, REFRESH_SECRET, CORS_ORIGINS, etc., como en la sección 1.4). Para pruebas POS puedes dejar `CORS_ORIGINS=` vacío. Guarda (Ctrl+O, Enter, Ctrl+X).
+Pega las variables (DATABASE_URL, JWT_SECRET, REFRESH_SECRET, CORS_ORIGINS, etc., como en 1.4). Para pruebas POS puedes dejar `CORS_ORIGINS=` vacío. Guarda: Ctrl+O, Enter, Ctrl+X.
 
-**5. Instalar dependencias, generar Prisma y compilar**
+**5. Instalar, generar Prisma y compilar**
 ```bash
 npm ci
 npx prisma generate
@@ -232,7 +250,9 @@ pm2 status
 ufw allow 3000/tcp && ufw reload
 ```
 
-**Para actualizar después:** entra por SSH, `cd /root/rifard/apps/backend`, `git pull` (o vuelve a subir los archivos), luego repite los pasos 5 y 6.
+**Comprobar:** en el navegador o desde el POS: `http://187.124.81.201:3000/api/v1/health/pos-connect`
+
+**Para actualizar después:** `cd /root/rifard/apps/backend`, `git pull`, luego repetir pasos 5 y 6.
 
 ---
 

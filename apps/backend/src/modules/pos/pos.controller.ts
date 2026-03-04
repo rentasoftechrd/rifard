@@ -15,7 +15,7 @@ export class PosController {
   constructor(private pos: PosService) {}
 
   @Post('register-device')
-  @Roles(ROLE_POS_SELLER, ROLE_POS_ADMIN)
+  @Roles(ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_POS_ADMIN, ROLE_POS_SELLER)
   @ApiOperation({ summary: 'Register device for point (if user has point assigned)' })
   registerDevice(
     @CurrentUser('sub') userId: string,
@@ -25,7 +25,7 @@ export class PosController {
   }
 
   @Post('heartbeat')
-  @Roles(ROLE_POS_SELLER, ROLE_POS_ADMIN)
+  @Roles(ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_POS_ADMIN, ROLE_POS_SELLER)
   @ApiOperation({ summary: 'POS heartbeat' })
   heartbeat(
     @Body() body: { deviceId: string; pointId: string; sellerId?: string; appVersion?: string },
@@ -41,7 +41,7 @@ export class PosController {
   }
 
   @Get('points')
-  @Roles(ROLE_POS_SELLER, ROLE_POS_ADMIN)
+  @Roles(ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_POS_ADMIN, ROLE_POS_SELLER)
   @ApiOperation({ summary: 'Points assigned to current user' })
   getPoints(@CurrentUser('sub') userId: string) {
     return this.pos.getPointsForUser(userId);

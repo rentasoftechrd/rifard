@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/http/api_client.dart';
-import '../../auth/providers/auth_provider.dart';
+import '../providers/auth_provider.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -30,8 +30,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _loadSavedUrl() async {
     final api = ref.read(apiClientProvider);
     final url = await api.baseUrl;
-    if (url != null && url.isNotEmpty && mounted) {
-      _urlController.text = url;
+    if (mounted) {
+      _urlController.text = (url != null && url.isNotEmpty) ? url : kDefaultBaseUrl;
     }
   }
 
@@ -119,7 +119,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final data = resp.body.isNotEmpty ? _parseJson(resp.body) : <String, dynamic>{};
       if (resp.statusCode == 200 || resp.statusCode == 201) {
         final accessToken = data['accessToken'] as String?;
-        if (accessToken != null) await api.setToken(accessToken);
+        if (accessToken != null) {
+          await api.setToken(accessToken);
+          ref.invalidate(isLoggedInProvider);
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
         if (mounted) context.go('/select-point');
       } else {
         setState(() {
@@ -158,9 +162,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 controller: _urlController,
                 decoration: const InputDecoration(
                   labelText: 'URL del servidor',
-                  hintText: 'http://192.168.1.10:3000',
+                  hintText: 'http://187.124.81.201:3000',
                   border: OutlineInputBorder(),
-                  helperText: 'En el celular use la IP de la PC donde corre el backend, no localhost',
+                  helperText: 'Por defecto: backend en el VPS. Puedes cambiarla si usas otro servidor.',
                 ),
                 keyboardType: TextInputType.url,
                 textInputAction: TextInputAction.next,
