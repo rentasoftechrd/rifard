@@ -135,12 +135,15 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     }
   }
 
+  /// Formato canónico para pointId (igual que en backend/BD): trim + minúsculas.
+  static String _canonicalPointId(String? id) => (id ?? '').trim().toLowerCase();
+
   /// Registra el dispositivo en el backend (necesario para que el heartbeat funcione).
   Future<({bool ok, String? error, int? status})> _ensureDeviceRegistered() async {
     try {
       final session = await ref.read(posSessionProvider.future);
       final api = ref.read(apiClientProvider);
-      final pointId = (session.pointId ?? '').trim();
+      final pointId = _canonicalPointId(session.pointId);
       final deviceId = (session.deviceId).trim();
       if (pointId.isEmpty) {
         if (mounted) setState(() => _registerDeviceStatus = 400);
@@ -182,8 +185,8 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     final userId = user?['id']?.toString();
     try {
       final resp = await api.post('/pos/heartbeat', body: {
-        'deviceId': session.deviceId,
-        'pointId': session.pointId,
+        'deviceId': (session.deviceId).trim(),
+        'pointId': _canonicalPointId(session.pointId),
         if (userId != null) 'sellerId': userId,
         'appVersion': '1.0.0',
       });

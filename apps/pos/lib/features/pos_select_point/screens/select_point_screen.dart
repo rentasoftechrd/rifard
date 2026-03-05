@@ -106,7 +106,7 @@ class _SelectPointScreenState extends ConsumerState<SelectPointScreen> {
                     subtitle: Text(p['code']?.toString() ?? '', style: const TextStyle(color: AppColors.textMuted)),
                     trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
                     onTap: () async {
-                      final id = pointId?.trim();
+                      final id = pointId?.trim().toLowerCase();
                       if (id != null && id.isNotEmpty) {
                         await setPointId(id);
                         ref.invalidate(posSessionProvider);

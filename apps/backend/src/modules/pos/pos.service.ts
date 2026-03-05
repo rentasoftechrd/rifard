@@ -5,6 +5,16 @@ import { UpdatePosPointDto } from './dto/update-pos-point.dto';
 
 const DEFAULT_ONLINE_SECONDS = 60;
 
+/** Formato canónico para IDs: mismo que en BD. pointId es UUID → trim + minúsculas. */
+function normalizePointId(id: string | null | undefined): string {
+  const s = (id ?? '').trim();
+  return s ? s.toLowerCase() : s;
+}
+
+function normalizeDeviceId(id: string | null | undefined): string {
+  return (id ?? '').trim();
+}
+
 @Injectable()
 export class PosService {
   constructor(private prisma: PrismaService) {}
@@ -18,7 +28,7 @@ export class PosService {
       },
     });
     return points.map((p) => ({
-      id: p.id,
+      id: normalizePointId(p.id) || p.id,
       name: p.name,
       code: p.code,
       address: p.address,
@@ -77,10 +87,11 @@ export class PosService {
     return parseInt(process.env.POS_HEARTBEAT_ONLINE_SECONDS ?? String(DEFAULT_ONLINE_SECONDS), 10) || DEFAULT_ONLINE_SECONDS;
   }
 
-  /** Registra el dispositivo en el punto si el usuario tiene el punto asignado. Idempotente. */
+  /** Registra el dispositivo en el punto si el usuario tiene el punto asignado. Idempotente.
+   * pointId y deviceId se normalizan para coincidir con el formato de la BD. */
   async registerDevice(userId: string, dto: { deviceId: string; pointId: string; name?: string }) {
     const uid = (userId ?? '').trim();
-    const pointId = (dto.pointId ?? '').trim();
+    const pointId = normalizePointId(dto.pointId);
     if (!pointId || !uid) {
       throw new BadRequestException('Faltan pointId o usuario. Cierra sesión y vuelve a entrar.');
     }
@@ -96,13 +107,14 @@ export class PosService {
             : `No tiene asignado este punto (pointId=${pointId.slice(0, 8)}…). Tiene ${count} punto(s) asignado(s); usa el mismo que elegiste en "Seleccionar punto".`;
         throw new BadRequestException(msg);
       }
-      const deviceId = (dto.deviceId ?? '').trim();
+      const deviceId = normalizeDeviceId(dto.deviceId);
       if (!deviceId) throw new BadRequestException('Falta deviceId.');
       const existing = await this.prisma.posDevice.findUnique({
         where: { deviceId },
       });
       if (existing) {
-        if (existing.pointId !== pointId) throw new BadRequestException('El dispositivo ya está asignado a otro punto');
+        const existingPointIdNorm = normalizePointId(existing.pointId);
+        if (existingPointIdNorm !== pointId) throw new BadRequestException('El dispositivo ya está asignado a otro punto');
         return existing;
       }
       return this.prisma.posDevice.create({
@@ -123,24 +135,28 @@ export class PosService {
   }
 
   async heartbeat(dto: { deviceId: string; pointId: string; sellerId?: string; appVersion?: string }) {
+    const deviceId = normalizeDeviceId(dto.deviceId);
+    const pointId = normalizePointId(dto.pointId);
+    if (!deviceId || !pointId) throw new NotFoundException('Device not registered');
+
     const device = await this.prisma.posDevice.findUnique({
-      where: { deviceId: dto.deviceId },
+      where: { deviceId },
       include: { point: true },
     });
     if (!device) throw new NotFoundException('Device not registered');
-    if (device.pointId !== dto.pointId) throw new NotFoundException('Device not assigned to this point');
+    if (normalizePointId(device.pointId) !== pointId) throw new NotFoundException('Device not assigned to this point');
 
     await this.prisma.posPresence.upsert({
-      where: { deviceId: dto.deviceId },
+      where: { deviceId },
       create: {
-        deviceId: dto.deviceId,
-        pointId: dto.pointId,
+        deviceId,
+        pointId,
         sellerUserId: dto.sellerId ?? null,
         appVersion: dto.appVersion ?? null,
         lastSeenAt: new Date(),
       },
       update: {
-        pointId: dto.pointId,
+        pointId,
         sellerUserId: dto.sellerId ?? null,
         appVersion: dto.appVersion ?? null,
         lastSeenAt: new Date(),
@@ -180,12 +196,17 @@ export class PosService {
     };
   }
 
+  /** Puntos asignados al usuario (POS). Devuelve id en formato canónico para que el cliente envíe el mismo valor. */
   async getPointsForUser(userId: string) {
     const assignments = await this.prisma.pointAssignment.findMany({
       where: { sellerUserId: userId, active: true },
       include: { point: true },
     });
-    return assignments.map((a) => ({ ...a.point, commissionPercent: a.commissionPercent }));
+    return assignments.map((a) => ({
+      ...a.point,
+      id: normalizePointId(a.point.id) || a.point.id,
+      commissionPercent: a.commissionPercent,
+    }));
   }
 
   async getMySession(userId: string, deviceId?: string) {
