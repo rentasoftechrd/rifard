@@ -1,11 +1,77 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CreatePosPointDto } from './dto/create-pos-point.dto';
+import { UpdatePosPointDto } from './dto/update-pos-point.dto';
 
 const DEFAULT_ONLINE_SECONDS = 60;
 
 @Injectable()
 export class PosService {
   constructor(private prisma: PrismaService) {}
+
+  /** Lista todos los puntos de venta (backoffice admin). Incluye inactivos y conteo de asignaciones. */
+  async findAllPointsForAdmin() {
+    const points = await this.prisma.posPoint.findMany({
+      orderBy: [{ active: 'desc' }, { name: 'asc' }],
+      include: {
+        _count: { select: { pointAssignments: true, posDevices: true } },
+      },
+    });
+    return points.map((p) => ({
+      id: p.id,
+      name: p.name,
+      code: p.code,
+      address: p.address,
+      active: p.active,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+      assignmentsCount: p._count.pointAssignments,
+      devicesCount: p._count.posDevices,
+    }));
+  }
+
+  /** Crea un nuevo punto de venta. Código debe ser único. */
+  async createPoint(dto: CreatePosPointDto) {
+    const existing = await this.prisma.posPoint.findUnique({ where: { code: dto.code.trim() } });
+    if (existing) throw new ConflictException(`Ya existe un punto con el código "${dto.code}"`);
+    return this.prisma.posPoint.create({
+      data: {
+        name: dto.name.trim(),
+        code: dto.code.trim(),
+        address: dto.address?.trim() || null,
+        active: dto.active ?? true,
+      },
+    });
+  }
+
+  /** Actualiza un punto de venta. Si se cambia code, debe seguir siendo único. */
+  async updatePoint(id: string, dto: UpdatePosPointDto) {
+    const point = await this.prisma.posPoint.findUnique({ where: { id } });
+    if (!point) throw new NotFoundException('Punto de venta no encontrado');
+    if (dto.code != null && dto.code.trim() !== point.code) {
+      const existing = await this.prisma.posPoint.findUnique({ where: { code: dto.code.trim() } });
+      if (existing) throw new ConflictException(`Ya existe un punto con el código "${dto.code}"`);
+    }
+    return this.prisma.posPoint.update({
+      where: { id },
+      data: {
+        ...(dto.name != null && { name: dto.name.trim() }),
+        ...(dto.code != null && { code: dto.code.trim() }),
+        ...(dto.address !== undefined && { address: dto.address?.trim() || null }),
+        ...(dto.active !== undefined && { active: dto.active }),
+      },
+    });
+  }
+
+  /** Desactiva un punto de venta (soft delete). Los vendedores ya no lo verán para asignar. */
+  async deactivatePoint(id: string) {
+    const point = await this.prisma.posPoint.findUnique({ where: { id } });
+    if (!point) throw new NotFoundException('Punto de venta no encontrado');
+    return this.prisma.posPoint.update({
+      where: { id },
+      data: { active: false },
+    });
+  }
 
   private getOnlineThresholdSeconds(): number {
     return parseInt(process.env.POS_HEARTBEAT_ONLINE_SECONDS ?? String(DEFAULT_ONLINE_SECONDS), 10) || DEFAULT_ONLINE_SECONDS;

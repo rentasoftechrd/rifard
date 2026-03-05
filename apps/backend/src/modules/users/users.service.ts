@@ -12,12 +12,14 @@ export class UsersService {
     if (!persona) throw new ConflictException('Persona no encontrada');
     const existingUserForPersona = await this.prisma.user.findUnique({ where: { personaId: dto.personaId } });
     if (existingUserForPersona) throw new ConflictException('Esta persona ya tiene una cuenta de usuario');
-    const existing = await this.prisma.user.findFirst({ where: { email: dto.email } });
+    const email = (dto.email?.trim() || persona.email?.trim()) || null;
+    if (!email) throw new ConflictException('La persona debe tener email para crear usuario (edita la persona y añade email)');
+    const existing = await this.prisma.user.findFirst({ where: { email } });
     if (existing) throw new ConflictException('Ya existe un usuario con este email');
     const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id });
     const user = await this.prisma.user.create({
       data: {
-        email: dto.email,
+        email,
         fullName: persona.fullName,
         phone: persona.phone,
         passwordHash,
