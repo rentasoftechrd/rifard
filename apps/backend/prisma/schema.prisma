@@ -53,18 +53,19 @@ enum TipoPersona {
 }
 
 model Persona {
-  id        String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  fullName  String      @map("full_name")
-  cedula    String?
-  phone     String?
-  email     String?
-  address   String?
-  sector    String?
-  city      String?
-  tipo      TipoPersona @default(OTRO)
-  createdAt DateTime    @default(now()) @map("created_at")
-  updatedAt DateTime    @updatedAt @map("updated_at")
-  user      User?
+  id                     String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  fullName               String      @map("full_name")
+  cedula                 String?
+  phone                  String?
+  email                  String?
+  address                String?
+  sector                 String?
+  city                   String?
+  tipo                   TipoPersona @default(OTRO)
+  defaultCommissionPercent Decimal?   @map("default_commission_percent") @db.Decimal(5, 2)
+  createdAt              DateTime    @default(now()) @map("created_at")
+  updatedAt              DateTime    @updatedAt @map("updated_at")
+  user                   User?
   @@map("personas")
 }
 

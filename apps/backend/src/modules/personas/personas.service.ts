@@ -24,6 +24,7 @@ export class PersonasService {
         sector: dto.sector?.trim() || null,
         city: dto.city?.trim() || null,
         tipo: (dto.tipo as TipoPersona) || 'OTRO',
+        defaultCommissionPercent: dto.defaultCommissionPercent ?? null,
       },
     });
   }
@@ -84,6 +85,7 @@ export class PersonasService {
         sector: p.sector,
         city: p.city,
         tipo: p.tipo,
+        defaultCommissionPercent: p.defaultCommissionPercent != null ? Number(p.defaultCommissionPercent) : null,
         createdAt: p.createdAt,
         user: user
           ? {
@@ -130,6 +132,7 @@ export class PersonasService {
         ...(dto.sector !== undefined && { sector: dto.sector?.trim() || null }),
         ...(dto.city !== undefined && { city: dto.city?.trim() || null }),
         ...(dto.tipo != null && { tipo: dto.tipo as TipoPersona }),
+        ...(dto.defaultCommissionPercent !== undefined && { defaultCommissionPercent: dto.defaultCommissionPercent }),
       },
     });
   }
