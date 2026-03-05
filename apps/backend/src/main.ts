@@ -53,6 +53,7 @@ async function bootstrap() {
   await app.listen(port, host);
   console.log(`Application is running on: http://${host}:${port}/api/v1`);
   console.log(`POS conexión (público): GET http://<IP>:${port}/api/v1/health/pos-connect`);
-  console.log(`Swagger: http://localhost:${port}/api/docs`);
+  // "localhost" en el mensaje = desde el mismo servidor. Desde fuera usa la IP o dominio del servidor.
+  console.log(`Swagger (desde este servidor: localhost:${port}/api/docs; desde fuera: <IP>:${port}/api/docs)`);
 }
 bootstrap();

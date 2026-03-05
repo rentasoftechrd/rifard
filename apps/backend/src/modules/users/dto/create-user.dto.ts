@@ -2,18 +2,14 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsEmail, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 
 export class CreateUserDto {
+  /** Persona a la que se vincula; nombre y teléfono se toman de la persona. */
+  @ApiProperty()
+  @IsUUID('4')
+  personaId!: string;
+
   @ApiProperty()
   @IsEmail()
   email!: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  phone?: string;
-
-  @ApiProperty()
-  @IsString()
-  fullName!: string;
 
   @ApiProperty()
   @IsString()

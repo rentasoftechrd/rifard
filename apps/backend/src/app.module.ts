@@ -12,6 +12,8 @@ import { PayoutsModule } from './modules/payouts/payouts.module';
 import { TicketsModule } from './modules/tickets/tickets.module';
 import { PosModule } from './modules/pos/pos.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { VendorsModule } from './modules/vendors/vendors.module';
+import { PersonasModule } from './modules/personas/personas.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { HealthModule } from './modules/health/health.module';
 
@@ -30,6 +32,8 @@ import { HealthModule } from './modules/health/health.module';
     TicketsModule,
     PosModule,
     ReportsModule,
+    VendorsModule,
+    PersonasModule,
     AuditModule,
     HealthModule,
   ],

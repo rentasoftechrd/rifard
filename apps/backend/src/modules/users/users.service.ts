@@ -8,18 +8,21 @@ export class UsersService {
   constructor(private prisma: PrismaService) {}
 
   async create(dto: CreateUserDto) {
-    const existing = await this.prisma.user.findFirst({
-      where: { OR: [{ email: dto.email }, ...(dto.phone ? [{ phone: dto.phone }] : [])] },
-    });
-    if (existing) throw new ConflictException('User with this email or phone already exists');
+    const persona = await this.prisma.persona.findUnique({ where: { id: dto.personaId } });
+    if (!persona) throw new ConflictException('Persona no encontrada');
+    const existingUserForPersona = await this.prisma.user.findUnique({ where: { personaId: dto.personaId } });
+    if (existingUserForPersona) throw new ConflictException('Esta persona ya tiene una cuenta de usuario');
+    const existing = await this.prisma.user.findFirst({ where: { email: dto.email } });
+    if (existing) throw new ConflictException('Ya existe un usuario con este email');
     const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id });
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
-        phone: dto.phone,
-        fullName: dto.fullName,
+        fullName: persona.fullName,
+        phone: persona.phone,
         passwordHash,
         active: dto.active ?? true,
+        personaId: dto.personaId,
       },
       select: { id: true, email: true, phone: true, fullName: true, active: true, createdAt: true },
     });
@@ -40,11 +43,13 @@ export class UsersService {
         take: limit,
         select: {
           id: true,
+          personaId: true,
           email: true,
           phone: true,
           fullName: true,
           active: true,
           createdAt: true,
+          persona: true,
           userRoles: { include: { role: { select: { id: true, code: true, name: true } } } },
         },
         orderBy: { createdAt: 'desc' },
@@ -59,12 +64,14 @@ export class UsersService {
       where: { id },
       select: {
         id: true,
+        personaId: true,
         email: true,
         phone: true,
         fullName: true,
         active: true,
         createdAt: true,
         updatedAt: true,
+        persona: true,
         userRoles: { include: { role: { select: { id: true, code: true, name: true } } } },
       },
     });
@@ -87,6 +94,7 @@ export class UsersService {
       updateData.passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id });
       delete updateData.password;
     }
+    if (dto.personaId !== undefined) updateData.personaId = dto.personaId;
     await this.prisma.user.update({ where: { id }, data: updateData as never });
     return this.findOne(id);
   }
