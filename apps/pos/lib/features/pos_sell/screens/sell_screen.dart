@@ -105,8 +105,9 @@ class _SellScreenState extends ConsumerState<SellScreen> {
         final count = list is List ? list.length : 0;
         buffer.writeln('  → Puntos asignados: $count');
         if (list is List && list.isNotEmpty && session.pointId != null) {
-          final ids = list.map((e) => (e as Map)['id']?.toString()).toList();
-          final match = ids.contains(session.pointId);
+          final canonical = _canonicalPointId(session.pointId);
+          final ids = list.map((e) => ((e as Map)['id']?.toString() ?? '').trim().toLowerCase()).toList();
+          final match = ids.contains(canonical);
           buffer.writeln('  → pointId de esta sesión está en la lista: $match');
         }
       } else if (pointsResp.statusCode == 401) {
@@ -116,6 +117,12 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       }
     } catch (e) {
       buffer.writeln('POS Points: ERROR $e');
+    }
+    if (session.pointId != null && session.pointId!.isNotEmpty) {
+      buffer.writeln('');
+      final check = await _checkAssignment(_canonicalPointId(session.pointId));
+      buffer.writeln('Check asignación: ${check.assigned ? "SÍ" : "NO"}');
+      if (check.message != null) buffer.writeln('  → ${check.message}');
     }
     buffer.writeln('');
     buffer.writeln('URL: $base');
@@ -138,7 +145,30 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   /// Formato canónico para pointId (igual que en backend/BD): trim + minúsculas.
   static String _canonicalPointId(String? id) => (id ?? '').trim().toLowerCase();
 
-  /// Registra el dispositivo en el backend (necesario para que el heartbeat funcione).
+  /// Comprueba si el usuario tiene este punto asignado (mismo criterio que el backend).
+  /// Devuelve statusCode para detectar 404 (backend sin esta ruta).
+  Future<({bool assigned, String? message, int? statusCode})> _checkAssignment(String pointId) async {
+    if (pointId.isEmpty) return (assigned: false, message: 'No hay pointId.', statusCode: null);
+    try {
+      final api = ref.read(apiClientProvider);
+      final resp = await api.get('/pos/check-assignment', queryParams: {'pointId': pointId});
+      if (resp.statusCode != 200) {
+        String msg = _messageFromResponse(resp.body);
+        if (resp.statusCode == 404 && msg.toLowerCase().contains('cannot get')) {
+          msg = 'Backend desactualizado (falta ruta check-assignment). Actualiza el backend en el servidor.';
+        }
+        return (assigned: false, message: msg, statusCode: resp.statusCode);
+      }
+      final data = jsonDecode(resp.body) as Map<String, dynamic>?;
+      final assigned = data?['assigned'] == true;
+      final message = data?['message']?.toString();
+      return (assigned: assigned, message: message, statusCode: resp.statusCode);
+    } catch (_) {
+      return (assigned: false, message: 'No se pudo verificar la asignación.', statusCode: null);
+    }
+  }
+
+  /// Conexión en un solo flujo: (1) verificar asignación, (2) registrar dispositivo.
   Future<({bool ok, String? error, int? status})> _ensureDeviceRegistered() async {
     try {
       final session = await ref.read(posSessionProvider.future);
@@ -149,7 +179,17 @@ class _SellScreenState extends ConsumerState<SellScreen> {
         if (mounted) setState(() => _registerDeviceStatus = 400);
         return (ok: false, error: 'No hay punto seleccionado. Vuelve a "Seleccionar punto" y elige uno.', status: 400);
       }
-      if (kDebugMode) debugPrint('POS: register-device sending pointId=$pointId deviceId=$deviceId');
+      // 1) Verificar asignación (si el backend tiene la ruta). Si 404, intentar registrar igual (backend antiguo).
+      final check = await _checkAssignment(pointId);
+      if (check.statusCode == 404) {
+        if (kDebugMode) debugPrint('POS: check-assignment 404, trying register-device anyway (old backend)');
+      } else if (!check.assigned) {
+        if (mounted) setState(() => _registerDeviceStatus = check.statusCode ?? 403);
+        return (ok: false, error: check.message ?? 'Este punto no está asignado a tu usuario.', status: check.statusCode ?? 403);
+      } else if (kDebugMode) {
+        debugPrint('POS: check-assignment OK, registering device pointId=$pointId deviceId=$deviceId');
+      }
+      // 2) Registrar dispositivo
       final resp = await api.post('/pos/register-device', body: {
         'deviceId': deviceId,
         'pointId': pointId,
@@ -163,7 +203,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       if (resp.statusCode == 401) return (ok: false, error: 'Sesión expirada (401). Cierra sesión y vuelve a entrar.', status: 401);
       if (resp.statusCode >= 500) return (ok: false, error: 'Error del servidor (${resp.statusCode}). Puede ser fallo de conexión con la base de datos.', status: resp.statusCode);
       if (kDebugMode) debugPrint('POS: register-device failed ${resp.statusCode} $msg');
-      return (ok: false, error: msg.isNotEmpty ? msg : 'Error $resp.statusCode', status: resp.statusCode);
+      return (ok: false, error: msg.isNotEmpty ? msg : 'Error ${resp.statusCode}', status: resp.statusCode);
     } catch (e, st) {
       if (kDebugMode) debugPrint('POS: register-device error $e\n$st');
       if (mounted) setState(() => _registerDeviceStatus = null);
@@ -196,8 +236,8 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       }
       if (resp.statusCode == 404 && resp.body.contains('not registered')) {
         if (kDebugMode) debugPrint('POS: heartbeat 404 (device not registered), re-registering...');
-        final ok = await _ensureDeviceRegistered();
-        if (ok) {
+        final result = await _ensureDeviceRegistered();
+        if (result.ok) {
           await _sendHeartbeat();
           return;
         }
@@ -222,8 +262,8 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       }
       String msg = _messageFromResponse(resp.body);
       if (resp.statusCode == 401) msg = 'Sesión expirada. Cierra sesión y vuelve a entrar.';
-      if (resp.statusCode >= 500) msg = 'Error del servidor ($resp.statusCode). Puede ser fallo de conexión con la base de datos.';
-      if (mounted) setState(() => _lotteriesError = 'Loterías ($resp.statusCode): $msg');
+      if (resp.statusCode >= 500) msg = 'Error del servidor (${resp.statusCode}). Puede ser fallo de conexión con la base de datos.';
+      if (mounted) setState(() => _lotteriesError = 'Loterías (${resp.statusCode}): $msg');
     } catch (e) {
       if (mounted) setState(() {
         _lotteriesStatus = null;
@@ -271,8 +311,8 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     try {
       final api = ref.read(apiClientProvider);
       final resp = await api.post('/tickets', body: {
-        'pointId': session.pointId,
-        'deviceId': session.deviceId,
+        'pointId': _canonicalPointId(session.pointId),
+        'deviceId': (session.deviceId).trim(),
         'lines': _lines.map((l) => {
               'lotteryId': l['lotteryId'],
               'drawId': l['drawId'],
@@ -324,6 +364,30 @@ class _SellScreenState extends ConsumerState<SellScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Verificar conexión',
+            onPressed: () async {
+              setState(() => _diagnosticMessage = 'Probando…');
+              await _runDiagnostic();
+              if (!mounted) return;
+              showDialog<void>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Diagnóstico de conexión'),
+                  content: SingleChildScrollView(
+                    child: SelectableText(_diagnosticMessage ?? 'Sin resultado', style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      child: const Text('Cerrar'),
+                    ),
+                  ],
+                ),
+              );
+            },
+            icon: const Icon(Icons.wifi_find),
+          ),
           TextButton(onPressed: () => context.go('/history'), child: const Text('Historial')),
           TextButton(onPressed: () => context.go('/void'), child: const Text('Anular')),
           TextButton(onPressed: () => context.go('/closeout'), child: const Text('Cierre')),

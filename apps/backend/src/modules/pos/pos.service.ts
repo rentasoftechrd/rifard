@@ -1,14 +1,22 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePosPointDto } from './dto/create-pos-point.dto';
 import { UpdatePosPointDto } from './dto/update-pos-point.dto';
 
 const DEFAULT_ONLINE_SECONDS = 60;
 
-/** Formato canónico para IDs: mismo que en BD. pointId es UUID → trim + minúsculas. */
-function normalizePointId(id: string | null | undefined): string {
+/** Formato canónico para UUIDs: trim + minúsculas (igual que en BD). */
+function normalizeUuid(id: string | null | undefined): string {
   const s = (id ?? '').trim();
   return s ? s.toLowerCase() : s;
+}
+
+function normalizePointId(id: string | null | undefined): string {
+  return normalizeUuid(id);
+}
+
+function normalizeUserId(id: string | null | undefined): string {
+  return normalizeUuid(id);
 }
 
 function normalizeDeviceId(id: string | null | undefined): string {
@@ -17,6 +25,8 @@ function normalizeDeviceId(id: string | null | undefined): string {
 
 @Injectable()
 export class PosService {
+  private readonly logger = new Logger(PosService.name);
+
   constructor(private prisma: PrismaService) {}
 
   /** Lista todos los puntos de venta (backoffice admin). Incluye inactivos y conteo de asignaciones. */
@@ -88,23 +98,25 @@ export class PosService {
   }
 
   /** Registra el dispositivo en el punto si el usuario tiene el punto asignado. Idempotente.
-   * pointId y deviceId se normalizan para coincidir con el formato de la BD. */
+   * userId, pointId y deviceId se normalizan para coincidir con el formato de la BD. */
   async registerDevice(userId: string, dto: { deviceId: string; pointId: string; name?: string }) {
-    const uid = (userId ?? '').trim();
+    const uid = normalizeUserId(userId);
     const pointId = normalizePointId(dto.pointId);
     if (!pointId || !uid) {
       throw new BadRequestException('Faltan pointId o usuario. Cierra sesión y vuelve a entrar.');
     }
+    this.logger.debug(`registerDevice uid=${uid.slice(0, 8)}… pointId=${pointId.slice(0, 8)}…`);
     try {
       const assignment = await this.prisma.pointAssignment.findFirst({
         where: { pointId, sellerUserId: uid, active: true },
       });
       if (!assignment) {
         const count = await this.prisma.pointAssignment.count({ where: { sellerUserId: uid, active: true } });
+        this.logger.warn(`registerDevice: no assignment for uid=${uid.slice(0, 8)}… pointId=${pointId.slice(0, 8)}… (user has ${count} assignments)`);
         const msg =
           count === 0
-            ? 'No tiene ningún punto asignado. Asigna el punto en el backoffice (Personas → Puntos).'
-            : `No tiene asignado este punto (pointId=${pointId.slice(0, 8)}…). Tiene ${count} punto(s) asignado(s); usa el mismo que elegiste en "Seleccionar punto".`;
+            ? 'No tiene ningún punto asignado. Asigna el punto en el backoffice (Vendedores → asignar puntos).'
+            : `No tiene asignado este punto. Tiene ${count} punto(s); elige el mismo que en "Seleccionar punto".`;
         throw new BadRequestException(msg);
       }
       const deviceId = normalizeDeviceId(dto.deviceId);
@@ -198,8 +210,9 @@ export class PosService {
 
   /** Puntos asignados al usuario (POS). Devuelve id en formato canónico para que el cliente envíe el mismo valor. */
   async getPointsForUser(userId: string) {
+    const uid = normalizeUserId(userId);
     const assignments = await this.prisma.pointAssignment.findMany({
-      where: { sellerUserId: userId, active: true },
+      where: { sellerUserId: uid, active: true },
       include: { point: true },
     });
     return assignments.map((a) => ({
@@ -207,6 +220,29 @@ export class PosService {
       id: normalizePointId(a.point.id) || a.point.id,
       commissionPercent: a.commissionPercent,
     }));
+  }
+
+  /** Comprueba si el usuario tiene asignado un punto (mismo userId/pointId que register-device). Útil para diagnóstico. */
+  async checkAssignment(userId: string, pointId: string): Promise<{ assigned: boolean; message: string }> {
+    const uid = normalizeUserId(userId);
+    const pid = normalizePointId(pointId);
+    if (!uid || !pid) {
+      return { assigned: false, message: 'Faltan usuario o pointId.' };
+    }
+    const assignment = await this.prisma.pointAssignment.findFirst({
+      where: { pointId: pid, sellerUserId: uid, active: true },
+      include: { point: { select: { name: true, code: true } } },
+    });
+    if (!assignment) {
+      const count = await this.prisma.pointAssignment.count({ where: { sellerUserId: uid, active: true } });
+      return {
+        assigned: false,
+        message: count === 0
+          ? 'Este usuario no tiene ningún punto asignado. Asigna en backoffice (Vendedores → asignar puntos).'
+          : `Este punto no está asignado a este usuario. Tiene ${count} punto(s) asignado(s).`,
+      };
+    }
+    return { assigned: true, message: `Asignado a ${assignment.point.name || assignment.point.code}` };
   }
 
   async getMySession(userId: string, deviceId?: string) {

@@ -77,6 +77,13 @@ export class PosController {
     return this.pos.getPointsForUser(userId);
   }
 
+  @Get('check-assignment')
+  @Roles(ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_POS_ADMIN, ROLE_POS_SELLER)
+  @ApiOperation({ summary: 'Check if current user has the given point assigned (for POS connection)' })
+  checkAssignment(@CurrentUser('sub') userId: string, @Query('pointId') pointId: string) {
+    return this.pos.checkAssignment(userId, pointId ?? '');
+  }
+
   @Get('my-session')
   @Roles(ROLE_POS_SELLER)
   @ApiOperation({ summary: 'Current point + seller + device' })

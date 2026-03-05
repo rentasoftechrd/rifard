@@ -68,6 +68,12 @@ export class VendorsService {
     }));
   }
 
+  /** Normaliza UUID (trim + minúsculas) para coincidir con POS y BD. */
+  private normalizePointId(id: string): string {
+    const s = (id ?? '').trim();
+    return s ? s.toLowerCase() : s;
+  }
+
   async setAssignments(userId: string, dto: VendorAssignmentDto[]) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('Usuario no encontrado');
@@ -77,7 +83,7 @@ export class VendorsService {
     if (dto.length > 0) {
       await this.prisma.pointAssignment.createMany({
         data: dto.map((a) => ({
-          pointId: a.pointId,
+          pointId: this.normalizePointId(a.pointId),
           sellerUserId: userId,
           commissionPercent: new Decimal(a.commissionPercent),
           active: true,
