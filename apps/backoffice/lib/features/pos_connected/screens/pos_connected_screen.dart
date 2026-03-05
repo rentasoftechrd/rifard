@@ -140,11 +140,38 @@ class _PosConnectedScreenState extends ConsumerState<PosConnectedScreen> {
                           if (total == 0)
                             Padding(
                               padding: const EdgeInsets.symmetric(vertical: 24),
-                              child: Center(
-                                child: Text(
-                                  'Ningún POS ha enviado heartbeat aún.',
-                                  style: TextStyle(color: AppColors.textMuted),
-                                ),
+                              child: Column(
+                                children: [
+                                  Center(
+                                    child: Text(
+                                      'Ningún POS ha enviado heartbeat aún.',
+                                      style: TextStyle(color: AppColors.textMuted),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                  Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.surface,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: AppColors.border),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Si tienes el dispositivo conectado y no aparece aquí, revisa:',
+                                          style: Theme.of(context).textTheme.titleSmall?.copyWith(color: AppColors.textPrimary),
+                                        ),
+                                        const SizedBox(height: 10),
+                                        _bullet('Que la app POS use la misma URL del backend que este backoffice (misma IP y puerto).'),
+                                        _bullet('Que el vendedor tenga el punto asignado en Personas → botón "Puntos".'),
+                                        _bullet('Que en la app POS el vendedor haya iniciado sesión y elegido el punto de venta.'),
+                                        _bullet('Pulsa "Actualizar" (↻) por si los datos acaban de llegar.'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
                             )
                           else
@@ -250,6 +277,19 @@ class _PosConnectedScreenState extends ConsumerState<PosConnectedScreen> {
     String s = lastSeen.toString();
     if (s.length >= 19) s = s.substring(0, 19).replaceFirst('T', ' ');
     return s;
+  }
+
+  static Widget _bullet(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('• ', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+          Expanded(child: Text(text, style: const TextStyle(color: AppColors.textMuted, fontSize: 13))),
+        ],
+      ),
+    );
   }
 }
 

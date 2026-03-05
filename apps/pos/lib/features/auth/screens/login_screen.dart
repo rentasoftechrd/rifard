@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/http/api_client.dart';
+import '../../../core/theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -149,82 +150,105 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final inputDec = InputDecoration(
+      labelText: 'URL del servidor',
+      hintText: 'http://187.124.81.201:3000',
+      filled: true,
+      fillColor: AppColors.surface,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.border)),
+      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.primary, width: 1.5)),
+      labelStyle: const TextStyle(color: AppColors.textMuted),
+    );
     return Scaffold(
+      backgroundColor: AppColors.background,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('Rifard POS', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 24),
-              TextField(
-                controller: _urlController,
-                decoration: const InputDecoration(
-                  labelText: 'URL del servidor',
-                  hintText: 'http://187.124.81.201:3000',
-                  border: OutlineInputBorder(),
-                  helperText: 'Por defecto: backend en el VPS. Puedes cambiarla si usas otro servidor.',
-                ),
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.next,
-                autocorrect: false,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _emailController,
-                decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder()),
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.next,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                decoration: const InputDecoration(labelText: 'Password', border: OutlineInputBorder()),
-                obscureText: true,
-                onSubmitted: (_) => _login(),
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 16),
-                Text(_error!, style: const TextStyle(color: Colors.red)),
-              ],
-              if (_connectionMessage != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _connectionMessage!,
-                  style: TextStyle(
-                    color: _connectionMessage!.startsWith('Sin conexión') || _connectionMessage!.startsWith('Error')
-                        ? Colors.orange
-                        : Colors.green,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 24),
-              Row(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 400),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _loading || _testingConnection ? null : _testConnection,
-                      icon: _testingConnection
-                          ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.wifi_find, size: 20),
-                      label: const Text('Probar conexión'),
-                    ),
+                  Icon(Icons.point_of_sale, size: 48, color: AppColors.primary),
+                  const SizedBox(height: 12),
+                  Text('Rifard POS', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+                  const SizedBox(height: 8),
+                  Text('URL del servidor (misma que en el backoffice)', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: _urlController,
+                    decoration: inputDec.copyWith(helperText: 'Por defecto: backend en el VPS'),
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    keyboardType: TextInputType.url,
+                    textInputAction: TextInputAction.next,
+                    autocorrect: false,
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: FilledButton(
-                      onPressed: _loading || _testingConnection ? null : _login,
-                      child: _loading
-                          ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Text('Entrar'),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _emailController,
+                    decoration: inputDec.copyWith(labelText: 'Email', hintText: null, helperText: null),
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _passwordController,
+                    decoration: inputDec.copyWith(labelText: 'Contraseña', hintText: null, helperText: null),
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    obscureText: true,
+                    onSubmitted: (_) => _login(),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: AppColors.danger.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+                      child: Text(_error!, style: const TextStyle(color: AppColors.danger)),
                     ),
+                  ],
+                  if (_connectionMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _connectionMessage!,
+                      style: TextStyle(
+                        color: _connectionMessage!.startsWith('Sin conexión') || _connectionMessage!.startsWith('Error') ? AppColors.warning : AppColors.success,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _loading || _testingConnection ? null : _testConnection,
+                          style: OutlinedButton.styleFrom(foregroundColor: AppColors.primary, side: const BorderSide(color: AppColors.border)),
+                          icon: _testingConnection
+                              ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary))
+                              : const Icon(Icons.wifi_find, size: 20),
+                          label: const Text('Probar conexión'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton(
+                          onPressed: _loading || _testingConnection ? null : _login,
+                          style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+                          child: _loading
+                              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                              : const Text('Entrar'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),

@@ -22,6 +22,7 @@ Future<Map<String, dynamic>> fetchPosConnected(Ref ref) async {
   }
 }
 
-final posConnectedProvider = FutureProvider<Map<String, dynamic>>((ref) async {
+/// autoDispose: al salir y volver a la pantalla se vuelve a cargar. Invalidar refresca desde el backend.
+final posConnectedProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   return fetchPosConnected(ref);
 });

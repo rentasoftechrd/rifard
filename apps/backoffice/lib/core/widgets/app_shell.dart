@@ -17,9 +17,10 @@ class AppShell extends ConsumerWidget {
     ('/limits', 'Límites', Icons.tune),
     ('/pagos', 'Precios', Icons.payments),
     ('/payments', 'Pagos', Icons.paid),
+    ('/pos', 'POS', Icons.devices),
     ('/pos-connected', 'POS Conectados', Icons.point_of_sale),
     ('/users', 'Usuarios', Icons.people),
-    ('/vendors', 'Vendedores', Icons.storefront),
+    ('/personas', 'Personas', Icons.person),
     ('/reports', 'Reportes', Icons.assessment),
     ('/audit', 'Auditoría', Icons.history),
   ];

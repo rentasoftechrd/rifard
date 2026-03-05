@@ -141,6 +141,28 @@ server {
 
 Habilita el sitio y recarga Nginx. Así el backend queda corriendo en el VPS y accesible por `https://api.tudominio.com` (añade SSL con certbot si quieres).
 
+#### Actualizar el backend en Hostinger
+
+Cuando hay cambios en el código (por ejemplo módulo Personas, migración 0006):
+
+1. **Aplicar la migración en la base de datos** (solo la primera vez que subes la migración 0006). La BD suele estar en **Supabase** (la que usa `DATABASE_URL` del `.env`):
+   - Entra en [Supabase](https://supabase.com) → tu proyecto → **SQL Editor**.
+   - Copia y pega el contenido de `supabase_migrations/0006_personas.sql` y ejecuta.
+   - Si la BD está en otro Postgres, ejecuta ese mismo SQL con `psql` o el cliente que uses.
+
+2. **Desplegar desde tu PC** (PowerShell, desde la raíz del repo):
+   ```powershell
+   .\scripts\deploy-backend-vps.ps1 -VpsIp "187.124.81.201" -SshUser "root"
+   ```
+   Si usas clave SSH: `-SshKey "$env:USERPROFILE\.ssh\id_ed25519"`.
+
+   El script hace: build en tu PC → sube `dist/`, `prisma/`, `package.json`, `package-lock.json` al VPS → en el VPS ejecuta `npm ci --production`, `npx prisma generate`, reinicia pm2.
+
+3. **Comprobar** en el VPS:
+   ```bash
+   ssh root@187.124.81.201 "pm2 status && pm2 logs rifard-backend --lines 20"
+   ```
+
 #### Dejar el backend corriendo para pruebas con el POS
 
 **Root access (Hostinger):**
@@ -285,7 +307,7 @@ flutter pub get
 flutter build web --dart-define=API_URL=https://api.tudominio.com
 ```
 
-Sustituye `https://api.tudominio.com` por la URL real de tu API en Hostinger (con `https://` y sin barra final).
+Sustituye `https://api.tudominio.com` por la URL real de tu API en Hostinger (con `https://` y sin barra final). El build en release (por defecto) aplica minimización y carga diferida de pantallas; más detalles en [BACKOFFICE_PERFORMANCE.md](BACKOFFICE_PERFORMANCE.md).
 
 ### 2.2 Subir los archivos
 

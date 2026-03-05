@@ -16,11 +16,23 @@ class ApiClient {
       const String.fromEnvironment('API_URL', defaultValue: 'http://localhost:3000');
   String _baseUrl = _defaultBaseUrl;
 
+  /// Cache del token en memoria para no leer storage en cada comprobación de auth.
+  String? _cachedToken;
+  bool _tokenRead = false;
+
   String get baseUrl => _baseUrl;
   set baseUrl(String v) => _baseUrl = v;
 
-  Future<String?> get token async => _storage.read(key: _storageKey);
+  Future<String?> get token async {
+    if (_tokenRead) return _cachedToken;
+    _cachedToken = await _storage.read(key: _storageKey);
+    _tokenRead = true;
+    return _cachedToken;
+  }
+
   Future<void> setToken(String? t) async {
+    _cachedToken = t;
+    _tokenRead = true;
     if (t == null) {
       await _storage.delete(key: _storageKey);
     } else {

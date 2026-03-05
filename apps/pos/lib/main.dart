@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/router/app_router.dart';
+import 'core/theme/app_theme.dart';
 
 void main() {
   runApp(const ProviderScope(child: RifardPosApp()));
@@ -15,7 +16,7 @@ class RifardPosApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'Rifard POS',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.from(colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue)),
+      theme: darkTheme,
       routerConfig: router,
     );
   }

@@ -10,12 +10,13 @@ final _storage = FlutterSecureStorage(aOptions: AndroidOptions(encryptedSharedPr
 /// Obtiene el pointId guardado (null si no ha seleccionado punto).
 Future<String?> getPointId() => _storage.read(key: _keyPointId);
 
-/// Guarda el pointId al seleccionar punto.
+/// Guarda el pointId al seleccionar punto (se guarda sin espacios).
 Future<void> setPointId(String? id) async {
-  if (id == null) {
+  final v = id?.trim();
+  if (v == null || v.isEmpty) {
     await _storage.delete(key: _keyPointId);
   } else {
-    await _storage.write(key: _keyPointId, value: id);
+    await _storage.write(key: _keyPointId, value: v);
   }
 }
 

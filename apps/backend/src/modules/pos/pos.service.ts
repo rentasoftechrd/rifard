@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePosPointDto } from './dto/create-pos-point.dto';
 import { UpdatePosPointDto } from './dto/update-pos-point.dto';
@@ -79,24 +79,47 @@ export class PosService {
 
   /** Registra el dispositivo en el punto si el usuario tiene el punto asignado. Idempotente. */
   async registerDevice(userId: string, dto: { deviceId: string; pointId: string; name?: string }) {
-    const assignment = await this.prisma.pointAssignment.findFirst({
-      where: { pointId: dto.pointId, sellerUserId: userId, active: true },
-    });
-    if (!assignment) throw new BadRequestException('No tiene asignado este punto');
-    const existing = await this.prisma.posDevice.findUnique({
-      where: { deviceId: dto.deviceId },
-    });
-    if (existing) {
-      if (existing.pointId !== dto.pointId) throw new BadRequestException('El dispositivo ya está asignado a otro punto');
-      return existing;
+    const uid = (userId ?? '').trim();
+    const pointId = (dto.pointId ?? '').trim();
+    if (!pointId || !uid) {
+      throw new BadRequestException('Faltan pointId o usuario. Cierra sesión y vuelve a entrar.');
     }
-    return this.prisma.posDevice.create({
-      data: {
-        deviceId: dto.deviceId,
-        pointId: dto.pointId,
-        name: dto.name ?? null,
-      },
-    });
+    try {
+      const assignment = await this.prisma.pointAssignment.findFirst({
+        where: { pointId, sellerUserId: uid, active: true },
+      });
+      if (!assignment) {
+        const count = await this.prisma.pointAssignment.count({ where: { sellerUserId: uid, active: true } });
+        const msg =
+          count === 0
+            ? 'No tiene ningún punto asignado. Asigna el punto en el backoffice (Personas → Puntos).'
+            : `No tiene asignado este punto (pointId=${pointId.slice(0, 8)}…). Tiene ${count} punto(s) asignado(s); usa el mismo que elegiste en "Seleccionar punto".`;
+        throw new BadRequestException(msg);
+      }
+      const deviceId = (dto.deviceId ?? '').trim();
+      if (!deviceId) throw new BadRequestException('Falta deviceId.');
+      const existing = await this.prisma.posDevice.findUnique({
+        where: { deviceId },
+      });
+      if (existing) {
+        if (existing.pointId !== pointId) throw new BadRequestException('El dispositivo ya está asignado a otro punto');
+        return existing;
+      }
+      return this.prisma.posDevice.create({
+        data: {
+          deviceId,
+          pointId,
+          name: dto.name?.trim() ?? null,
+        },
+      });
+    } catch (err: unknown) {
+      if (err instanceof BadRequestException) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/connect|ECONNREFUSED|timeout|database/i.test(msg)) {
+        throw new ServiceUnavailableException('Error de conexión con la base de datos. Revisa que el servidor pueda conectar a la DB.');
+      }
+      throw err;
+    }
   }
 
   async heartbeat(dto: { deviceId: string; pointId: string; sellerId?: string; appVersion?: string }) {
