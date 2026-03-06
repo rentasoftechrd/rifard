@@ -1,12 +1,21 @@
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/http/api_client.dart';
+import '../../../core/session/app_session.dart';
 
-final apiClientProvider = Provider<ApiClient>((_) => ApiClient());
+final apiClientProvider = Provider<ApiClient>((ref) {
+  return ApiClient(
+    getToken: () => ref.read(appSessionProvider).token,
+    getRefreshToken: () => ref.read(appSessionProvider).refreshToken,
+    onSetTokens: (access, refresh) => ref.read(appSessionProvider.notifier).setTokens(access, refresh),
+    onClearSession: () => ref.read(appSessionProvider.notifier).clear(),
+  );
+});
 
+/// Espera rehidratación desde storage y luego devuelve si hay sesión (token en memoria).
 final isLoggedInProvider = FutureProvider<bool>((ref) async {
-  final api = ref.watch(apiClientProvider);
-  return api.isLoggedIn;
+  await ref.read(appSessionProvider.notifier).rehydrateFuture;
+  return ref.watch(appSessionProvider).isLoggedIn;
 });
 
 final currentUserProvider = FutureProvider<Map<String, dynamic>?>((ref) async {

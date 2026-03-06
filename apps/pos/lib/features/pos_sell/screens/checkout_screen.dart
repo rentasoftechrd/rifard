@@ -32,6 +32,17 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   double _recibidoValue() => double.tryParse(_recibidoController.text.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0;
   double _devueltaValue(double total) => _recibidoValue() - total;
 
+  static String _extractErrorMessage(Map<String, dynamic> data, int statusCode) {
+    final m = data['message'];
+    if (m == null) return 'Error $statusCode';
+    if (m is String) return m;
+    if (m is Map) {
+      final s = m['message'] ?? m['detail'];
+      return s?.toString() ?? 'Error $statusCode';
+    }
+    return m.toString();
+  }
+
   Future<void> _confirmarPago() async {
     final cart = ref.read(sellCartProvider);
     if (cart.isEmpty) {
@@ -68,8 +79,23 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           }
         }
       } else {
-        setState(() {
-          _error = data['message']?.toString() ?? 'Error ${resp.statusCode}';
+        String msg = _extractErrorMessage(data, resp.statusCode);
+        if (resp.statusCode >= 500 && resp.body.isNotEmpty) {
+          try {
+            final decoded = json.decode(resp.body) as Map<String, dynamic>?;
+            if (decoded != null) {
+              final extracted = _extractErrorMessage(decoded, resp.statusCode);
+              if (extracted.isNotEmpty && extracted != 'Error ${resp.statusCode}') msg = extracted;
+              else msg = 'Error del servidor (${resp.statusCode}). Revisa backend y datos del ticket.';
+            } else {
+              msg = 'Error del servidor (${resp.statusCode}). Revisa backend y datos del ticket.';
+            }
+          } catch (_) {
+            msg = 'Error del servidor (${resp.statusCode}). Revisa logs del backend.';
+          }
+        }
+        if (mounted) setState(() {
+          _error = msg;
           _loading = false;
         });
       }

@@ -20,13 +20,18 @@ class CartLine {
   final String? lotteryName;
   final String? drawTime;
 
-  Map<String, dynamic> toTicketLine() => {
-        'lotteryId': lotteryId,
-        'drawId': drawId,
-        'betType': betType,
-        'numbers': numbers,
-        'amount': amount,
-      };
+  Map<String, dynamic> toTicketLine() {
+    // El backend espera los números separados por espacio: "02 14" o "09 58 00".
+    // En la UI usamos guiones ("02-14", "09-58-00"), así que aquí convertimos.
+    final numbersForApi = numbers.replaceAll('-', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    return {
+      'lotteryId': lotteryId,
+      'drawId': drawId,
+      'betType': betType,
+      'numbers': numbersForApi,
+      'amount': amount,
+    };
+  }
 }
 
 /// Estado del carrito de venta (para pasar a pantalla Pago).

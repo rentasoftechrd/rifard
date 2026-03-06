@@ -18,10 +18,28 @@ export class TicketsService {
   ) {}
 
   async create(dto: CreateTicketDto, userId: string) {
+    try {
+      return await this.createTicket(dto, userId);
+    } catch (err: unknown) {
+      if (err instanceof BadRequestException || err instanceof NotFoundException) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : 'Error al crear el ticket';
+      throw new BadRequestException({ message, detail: String(err) });
+    }
+  }
+
+  private async createTicket(dto: CreateTicketDto, userId: string) {
     const timezone = process.env.BANCO_TIMEZONE ?? 'America/Santo_Domingo';
     const multipliers = await this.payouts.getMultipliers();
     const linesWithPayout = dto.lines.map((line) => {
+      // Normalizar formato de números desde el POS:
+      // la app puede enviar \"02-14\" o \"02 14\"; aquí convertimos todos los guiones en espacios
+      // para que validateAndNormalizeNumbers siempre reciba \"02 14\" / \"09 58 00\", etc.
       let numbers = (line.numbers ?? '').trim();
+      if (numbers.includes('-')) {
+        numbers = numbers.replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+      }
       try {
         numbers = validateAndNormalizeNumbers(numbers, line.betType as string);
       } catch (err) {

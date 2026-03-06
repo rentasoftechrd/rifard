@@ -18,7 +18,7 @@ POS online-first (sin SQLite): venta rápida de tickets, trazabilidad completa, 
 
 - **Hora/fecha:** Nunca `DateTime.now()` para lo contable. Todo desde servidor vía `GET /api/v1/health/time`.
 - **Sin DB local:** Sin SQLite. Backend (Postgres vía API) es la única fuente de verdad.
-- **Terminal:** Device binding (register-device) antes de permitir ventas; mostrar Terminal + estado Online/Offline.
+- **Terminal:** El dispositivo se asigna desde el backoffice (Personas → usuario → Puntos). En el POS al entrar en Ventas solo se valida (check-assignment) y se actualiza presencia (register-device en segundo plano); las loterías cargan de inmediato sin esperar al registro.
 
 ## Backend – lo que ya existe
 
@@ -47,6 +47,17 @@ POS online-first (sin SQLite): venta rápida de tickets, trazabilidad completa, 
 - **Estado:** Riverpod (session, serverClock, cart/draft, etc.).
 - **Capas:** UI (pantallas) → providers (casos de uso) → ApiClient (HTTP).
 - **Persistencia:** Solo tokens y URL en FlutterSecureStorage; nada contable en local.
+
+### Sesión en memoria (token)
+
+- **AppSession** (`core/session/app_session.dart`): estado en memoria con `token` y `refreshToken`. Es la **fuente única** del token mientras la app está abierta.
+- **No se rehidrata al abrir la app**: el usuario debe ingresar credenciales en cada apertura. En **login** se actualiza memoria y storage; en **logout** se limpia ambos.
+- **ApiClient** usa la sesión (getters síncronos) para no leer del storage en cada petición, evitando races y “sin token” al navegar (p. ej. a Ventas).
+- La sesión expira cuando el JWT caduca o el usuario cierra sesión; el refresh se hace en ApiClient y actualiza la sesión con los nuevos tokens.
+
+### Sorteos cerrados en Ventas
+
+- Al cargar sorteos se usa la fecha del servidor (`GET /health/time` → `serverDate`) para pedir `GET /draws?date=...`. El backend devuelve `displayStatus` (`open`, `closing_soon`, `closed`). En el desplegable solo se muestran sorteos no cerrados; al agregar jugada, ir a pago o emitir ticket se comprueba que el sorteo no esté cerrado y se bloquea con mensaje de error si ya cerró.
 
 ## Providers recomendados
 
@@ -85,6 +96,28 @@ POS online-first (sin SQLite): venta rápida de tickets, trazabilidad completa, 
 - [x] Ventas: Lotería/Sorteo, entrada rápida (número, monto, Agregar), lista jugadas, total, Limpiar/Validar/Ir a Pago; hora servidor en barra.
 - [x] Pago (/payment): total, método (Efectivo/Otro), Recibido, Devuelta, Confirmar Pago → POST /tickets; éxito → detalle ticket o /sell.
 - [x] Cuadre: GET /pos/closeout con fecha servidor; resumen Ventas, Anulaciones, Net, Tickets; Generar reporte / Cerrar turno.
+
+## Probar endpoint de loterías antes de generar el APK
+
+Desde la raíz del repo (usa un usuario que exista en el backend):
+
+```powershell
+$env:API_URL="http://187.124.81.201:3000"; $env:TEST_EMAIL="tu_email@ejemplo.com"; $env:TEST_PASSWORD="tu_password"; node apps/backend/scripts/test-lotteries-endpoint.js
+```
+
+El script comprueba: (1) Health, (2) Login, (3) GET /api/v1/lotteries. Si los tres pasan, puedes generar el APK.
+
+### Verificar usuario en la base de datos
+
+Si el POS muestra "Sin token" o 401, comprueba que el usuario exista y esté activo en la BD. Desde `apps/backend`:
+
+```bash
+CHECK_EMAIL=tu_email@ejemplo.com node scripts/verify-user-in-db.js
+# o por teléfono:
+CHECK_PHONE=8095551234 node scripts/verify-user-in-db.js
+```
+
+El script muestra: si el usuario existe, `active`, roles y puntos asignados. Si `active` es false o no tiene roles/puntos, eso puede explicar el error.
 
 ## Problemas frecuentes (401, “no entra”)
 

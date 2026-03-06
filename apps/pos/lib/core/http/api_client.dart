@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
-const _storageKey = 'rifard_access_token';
-const _storageKeyRefresh = 'rifard_refresh_token';
 const _baseUrlKey = 'rifard_base_url';
+const _storageKeyToken = 'rifard_access_token';
+const _storageKeyRefresh = 'rifard_refresh_token';
 
 /// URL por defecto del backend (VPS). Si el usuario no guardó ninguna, se usa esta.
 const kDefaultBaseUrl = 'http://187.124.81.201:3000';
@@ -15,13 +15,28 @@ String? get _envApiUrl {
   return url.isEmpty ? null : url;
 }
 
+/// Callbacks opcionales para usar sesión en memoria (evita lecturas async al storage).
+typedef TokenGetter = String? Function();
+typedef SetTokensCallback = Future<void> Function(String accessToken, String? refreshToken);
+typedef ClearSessionCallback = Future<void> Function();
+
 class ApiClient {
-  ApiClient({http.Client? client, FlutterSecureStorage? storage})
-      : _client = client ?? http.Client(),
+  ApiClient({
+    http.Client? client,
+    FlutterSecureStorage? storage,
+    this.getToken,
+    this.getRefreshToken,
+    this.onSetTokens,
+    this.onClearSession,
+  })  : _client = client ?? http.Client(),
         _storage = storage ?? const FlutterSecureStorage();
 
   final http.Client _client;
   final FlutterSecureStorage _storage;
+  final TokenGetter? getToken;
+  final TokenGetter? getRefreshToken;
+  final SetTokensCallback? onSetTokens;
+  final ClearSessionCallback? onClearSession;
 
   Future<String?> get baseUrl async {
     final env = _envApiUrl;
@@ -45,28 +60,44 @@ class ApiClient {
     }
   }
 
-  Future<String?> get token async => _storage.read(key: _storageKey);
-  Future<String?> get refreshToken async => _storage.read(key: _storageKeyRefresh);
+  /// Token actual: primero desde sesión en memoria, si no desde storage.
+  Future<String?> get token async =>
+      getToken?.call() ?? _storage.read(key: _storageKeyToken);
+
+  Future<String?> get refreshToken async =>
+      getRefreshToken?.call() ?? _storage.read(key: _storageKeyRefresh);
 
   Future<void> setToken(String? t) async {
     if (t == null) {
-      await _storage.delete(key: _storageKey);
-      await _storage.delete(key: _storageKeyRefresh);
+      if (onClearSession != null) {
+        await onClearSession!();
+      } else {
+        await _storage.delete(key: _storageKeyToken);
+        await _storage.delete(key: _storageKeyRefresh);
+      }
     } else {
-      await _storage.write(key: _storageKey, value: t);
+      if (onSetTokens != null) {
+        await onSetTokens!(t, null);
+      } else {
+        await _storage.write(key: _storageKeyToken, value: t);
+      }
     }
   }
 
   /// Guarda access y refresh token (login). Al cerrar sesión usar setToken(null).
   Future<void> setTokens(String accessToken, String? refreshToken) async {
-    await _storage.write(key: _storageKey, value: accessToken);
-    if (refreshToken != null && refreshToken.isNotEmpty) {
-      await _storage.write(key: _storageKeyRefresh, value: refreshToken);
+    if (onSetTokens != null) {
+      await onSetTokens!(accessToken, refreshToken);
+    } else {
+      await _storage.write(key: _storageKeyToken, value: accessToken);
+      if (refreshToken != null && refreshToken.isNotEmpty) {
+        await _storage.write(key: _storageKeyRefresh, value: refreshToken);
+      }
     }
   }
 
   Future<Map<String, String>> _headers() async {
-    final t = await token;
+    final t = getToken?.call() ?? await _storage.read(key: _storageKeyToken);
     final headers = {'Content-Type': 'application/json', 'Accept': 'application/json'};
     if (t != null) headers['Authorization'] = 'Bearer $t';
     return headers;

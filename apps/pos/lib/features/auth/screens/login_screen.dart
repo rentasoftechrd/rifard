@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/http/api_client.dart';
 import '../../../core/server_time/server_time_provider.dart';
+import '../../../core/session/app_session.dart';
 import '../../../core/session/pos_session.dart';
 import '../../../core/theme/app_theme.dart';
 import '../providers/auth_provider.dart';
@@ -125,12 +126,25 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       });
       final data = resp.body.isNotEmpty ? _parseJson(resp.body) : <String, dynamic>{};
       if (resp.statusCode == 200 || resp.statusCode == 201) {
-        final accessToken = data['accessToken'] as String?;
-        final refreshToken = data['refreshToken'] as String?;
-        if (accessToken != null) {
-          await api.setTokens(accessToken, refreshToken);
-          ref.invalidate(isLoggedInProvider);
-          await Future.delayed(const Duration(milliseconds: 100));
+        final accessToken = (data['accessToken'] ?? data['access_token']) as String?;
+        final refreshToken = (data['refreshToken'] ?? data['refresh_token']) as String?;
+        if (accessToken != null && accessToken.toString().trim().isNotEmpty) {
+          await api.setTokens(accessToken.trim(), refreshToken?.toString().trim());
+          final saved = ref.read(appSessionProvider).token;
+          if (saved == null || saved.isEmpty) {
+            setState(() {
+              _error = 'No se pudo guardar la sesión. Reintenta.';
+              _loading = false;
+            });
+            return;
+          }
+          await Future.delayed(const Duration(milliseconds: 150));
+        } else {
+          setState(() {
+            _error = 'El servidor no devolvió token. Revisa la respuesta del login.';
+            _loading = false;
+          });
+          return;
         }
         if (mounted) context.go('/select-point');
       } else {
@@ -179,7 +193,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Icon(Icons.point_of_sale, size: 48, color: AppColors.primary),
+                  Image.asset('assets/logo.png', height: 64, fit: BoxFit.contain),
                   const SizedBox(height: 12),
                   Text('Rifard POS', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
                   const SizedBox(height: 8),

@@ -161,6 +161,10 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       setState(() => _error = 'Seleccione lotería y sorteo');
       return;
     }
+    if (_isSelectedDrawClosed()) {
+      setState(() => _error = 'Este sorteo ya cerró. Elija otro sorteo o actualice la lista.');
+      return;
+    }
     final minDigits = _tipoJugada == 'Q' ? 2 : (_tipoJugada == 'T' ? 6 : 4);
     if (numStr.length < minDigits) {
       setState(() => _error = 'Número incompleto. $minDigits dígitos para ${_tipoJugada == "Q" ? "Quiniela" : _tipoJugada == "T" ? "Tripleta" : "Pale/Super Pale"}.');
@@ -203,6 +207,10 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       setState(() => _error = 'Seleccione lotería y sorteo');
       return;
     }
+    if (_isSelectedDrawClosed()) {
+      setState(() => _error = 'Este sorteo ya cerró. No se puede continuar al pago.');
+      return;
+    }
     final lotteryName = _lotteries.cast<Map<String, dynamic>?>().firstWhere((l) => l?['id'] == _selectedLotteryId, orElse: () => null)?['name']?.toString();
     final drawTime = _draws.cast<Map<String, dynamic>?>().firstWhere((d) => d?['id'] == _selectedDrawId, orElse: () => null)?['drawTime']?.toString() ?? '';
     final cartLines = _lines.map((l) => CartLine(
@@ -218,29 +226,52 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     context.push('/payment');
   }
 
+  /// Carga inicial: solo validar asignación (check-assignment) y cargar loterías.
+  /// El registro del dispositivo se hace en segundo plano (no bloquea); el dispositivo
+  /// debe estar registrado/asignado desde el backoffice y aquí solo se valida y se
+  /// actualiza presencia.
   Future<void> _initSessionAndLoad() async {
     if (!mounted) return;
     setState(() => _loadingInitial = true);
     try {
+      final api = ref.read(apiClientProvider);
       final session = await ref.read(posSessionProvider.future);
       if (!session.hasPoint) {
         if (mounted) context.go('/select-point');
         return;
       }
-      final api = ref.read(apiClientProvider);
       await api.refreshTokenIfExpiredOrSoon(minMinutes: 2);
       if (!mounted) return;
+
+      // 1) Validar que el usuario tiene este punto asignado (solo validación, no registrar).
+      final pointId = _canonicalPointId(session.pointId);
+      final check = await _checkAssignment(pointId);
+      if (check.statusCode != 404 && !check.assigned) {
+        if (mounted) {
+          setState(() {
+            _loadingInitial = false;
+            _registerDeviceError = check.message ?? 'Este punto no está asignado a tu usuario.';
+            _deviceRegistered = false;
+          });
+        }
+        return;
+      }
+
+      // 2) Cargar loterías de inmediato (no esperar al registro del dispositivo).
       await _loadLotteries();
       if (!mounted) return;
-      final result = await _ensureDeviceRegistered();
-      if (mounted) {
+      setState(() => _loadingInitial = false);
+
+      // 3) Registrar/validar dispositivo en segundo plano (para presencia y heartbeat).
+      _ensureDeviceRegistered().then((result) {
+        if (!mounted) return;
         setState(() {
           _deviceRegistered = result.ok;
           _registerDeviceError = result.error;
         });
-      }
-      _startHeartbeat();
-    } finally {
+        _startHeartbeat();
+      });
+    } catch (e) {
       if (mounted) setState(() => _loadingInitial = false);
     }
   }
@@ -472,12 +503,42 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   Future<void> _loadDraws() async {
     if (_selectedLotteryId == null) return;
     final api = ref.read(apiClientProvider);
-    final date = DateTime.now().toIso8601String().substring(0, 10);
+    String date;
+    try {
+      final st = await ref.read(serverTimeProvider.future);
+      date = st?.serverDate ?? DateTime.now().toIso8601String().substring(0, 10);
+    } catch (_) {
+      date = DateTime.now().toIso8601String().substring(0, 10);
+    }
     final resp = await api.get('/draws', queryParams: {'date': date, 'lotteryId': _selectedLotteryId!});
     if (resp.statusCode == 200) {
       final data = _parseList(resp.body);
-      setState(() => _draws = data);
+      setState(() {
+        _draws = data;
+        if (_selectedDrawId != null) {
+          final sel = data.cast<Map<String, dynamic>?>().firstWhere(
+                (e) => e?['id'] == _selectedDrawId,
+                orElse: () => null,
+              );
+          if (sel != null && (sel['displayStatus'] ?? sel['display_status']) == 'closed') {
+            _selectedDrawId = null;
+          }
+        }
+      });
     }
+  }
+
+  /// Sorteos que aún permiten venta (no cerrados). El backend devuelve displayStatus.
+  List<Map<String, dynamic>> get _drawsOpen =>
+      _draws.where((d) => (d['displayStatus'] ?? d['display_status']) != 'closed').toList();
+
+  bool _isSelectedDrawClosed() {
+    if (_selectedDrawId == null) return false;
+    final d = _draws.cast<Map<String, dynamic>?>().firstWhere(
+          (e) => e?['id'] == _selectedDrawId,
+          orElse: () => null,
+        );
+    return d != null && (d['displayStatus'] ?? d['display_status']) == 'closed';
   }
 
   List<Map<String, dynamic>> _parseList(String s) {
@@ -494,6 +555,10 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   Future<void> _sell() async {
     if (_lines.isEmpty) {
       setState(() => _error = 'Agregar al menos una línea');
+      return;
+    }
+    if (_isSelectedDrawClosed()) {
+      setState(() => _error = 'Este sorteo ya cerró. No se puede emitir el ticket.');
       return;
     }
     final session = await ref.read(posSessionProvider.future);
@@ -646,7 +711,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            value: _selectedDrawId,
+            value: _drawsOpen.any((d) => d['id'] == _selectedDrawId) ? _selectedDrawId : null,
             decoration: InputDecoration(
               labelText: 'Sorteo',
               filled: true,
@@ -655,7 +720,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
               enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.border)),
             ),
             dropdownColor: AppColors.surface,
-            items: _draws.map((d) => DropdownMenuItem(value: d['id']?.toString(), child: Text('${d['drawTime'] ?? d['draw_time']}', style: const TextStyle(color: AppColors.textPrimary)))).toList(),
+            items: _drawsOpen.map((d) => DropdownMenuItem(value: d['id']?.toString(), child: Text('${d['drawTime'] ?? d['draw_time']}', style: const TextStyle(color: AppColors.textPrimary)))).toList(),
             onChanged: _selectedLotteryId == null ? null : (v) => setState(() => _selectedDrawId = v),
           ),
           const SizedBox(height: 16),
@@ -851,7 +916,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                     children: [
                       Icon(Icons.info_outline, color: AppColors.warning, size: 20),
                       const SizedBox(width: 8),
-                      Expanded(child: Text('No se pudo registrar el dispositivo${_registerDeviceStatus != null ? " ($_registerDeviceStatus)" : ""}.', style: TextStyle(color: AppColors.textPrimary, fontSize: 12, fontWeight: FontWeight.w600))),
+                      Expanded(child: Text('Terminal no validado en servidor${_registerDeviceStatus != null ? " ($_registerDeviceStatus)" : ""}.', style: TextStyle(color: AppColors.textPrimary, fontSize: 12, fontWeight: FontWeight.w600))),
                     ],
                   ),
                   if (_registerDeviceError != null && _registerDeviceError!.isNotEmpty) ...[
@@ -859,7 +924,21 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                     Text(_registerDeviceError!, style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                   ],
                   const SizedBox(height: 4),
-                  Text('Debes entrar con el mismo usuario que tiene el punto asignado en el backoffice (Personas → Puntos). Usa la misma URL del servidor que el backoffice.', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                  Text('Puedes vender igual. Para aparecer "online" en el backoffice, el dispositivo debe estar asignado (Personas → usuario → Puntos).', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: () async {
+                      final result = await _ensureDeviceRegistered();
+                      if (mounted) setState(() {
+                        _deviceRegistered = result.ok;
+                        _registerDeviceError = result.error;
+                        if (result.ok) _startHeartbeat();
+                      });
+                    },
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Reintentar validar dispositivo'),
+                    style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+                  ),
                   if (_registerDeviceStatus == 401) ...[
                     const SizedBox(height: 8),
                     TextButton.icon(

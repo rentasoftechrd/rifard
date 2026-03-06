@@ -109,6 +109,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               label: const Text('Resultados'),
               style: OutlinedButton.styleFrom(foregroundColor: AppColors.primary, padding: const EdgeInsets.symmetric(vertical: 14)),
             ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => context.go('/printer-setup'),
+              icon: const Icon(Icons.print, size: 20),
+              label: const Text('Configurar impresora'),
+              style: OutlinedButton.styleFrom(foregroundColor: AppColors.primary, padding: const EdgeInsets.symmetric(vertical: 14)),
+            ),
           ],
         ),
       ),

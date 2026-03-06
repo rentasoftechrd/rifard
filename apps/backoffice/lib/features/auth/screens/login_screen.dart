@@ -90,6 +90,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Image.asset('assets/logo.png', height: 64, fit: BoxFit.contain),
+                  const SizedBox(height: 12),
                   const Text('Rifard Backoffice', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 24),
                   TextField(

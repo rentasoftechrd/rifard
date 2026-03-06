@@ -7,11 +7,11 @@ import '../../features/pos_sell/screens/sell_screen.dart';
 import '../../features/pos_sell/screens/checkout_screen.dart';
 import '../../features/auth/screens/login_screen.dart';
 import '../../features/pos_select_point/screens/select_point_screen.dart';
-import '../../features/printer_setup/screens/printer_setup_screen.dart';
 import '../../features/pos_history/screens/history_screen.dart';
 import '../../features/pos_void/screens/void_screen.dart';
 import '../../features/closeout/screens/closeout_screen.dart';
 import '../../features/pos_sell/screens/ticket_detail_screen.dart';
+import '../../features/printer_setup/screens/printer_setup_screen.dart';
 import '../../features/payments/screens/payments_screen.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
