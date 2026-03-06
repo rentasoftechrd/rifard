@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { TicketStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ensureDateNotFuture, serverTimeLocalRD, serverTodayISO } from '../../common/server-time';
 import { CreatePosPointDto } from './dto/create-pos-point.dto';
 import { UpdatePosPointDto } from './dto/update-pos-point.dto';
 
@@ -247,19 +249,69 @@ export class PosService {
 
   async getMySession(userId: string, deviceId?: string) {
     if (!deviceId) return { point: null, seller: null, device: null };
+    const devId = normalizeDeviceId(deviceId);
+    if (!devId) return { point: null, seller: null, device: null };
+    const uid = normalizeUserId(userId);
     const presence = await this.prisma.posPresence.findUnique({
-      where: { deviceId },
+      where: { deviceId: devId },
       include: {
         point: true,
         seller: { select: { id: true, fullName: true, email: true } },
         device: true,
       },
     });
-    if (!presence || presence.sellerUserId !== userId) return { point: null, seller: null, device: null };
+    if (!presence || normalizeUserId(presence.sellerUserId) !== uid) return { point: null, seller: null, device: null };
     return {
       point: presence.point,
       seller: presence.seller,
       device: presence.device,
+    };
+  }
+
+  /** Cuadre/cierre para el POS: ventas y anulaciones del día por punto y vendedor (solo si tiene el punto asignado). */
+  async getCloseout(userId: string, pointId: string, dateStr: string) {
+    const uid = normalizeUserId(userId);
+    const pid = normalizePointId(pointId);
+    const assignment = await this.prisma.pointAssignment.findFirst({
+      where: { pointId: pid, sellerUserId: uid, active: true },
+    });
+    if (!assignment) throw new BadRequestException('Punto no asignado a este usuario');
+    const safeDate = ensureDateNotFuture(dateStr || serverTodayISO());
+    const date = new Date(safeDate);
+    const start = new Date(date);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setUTCHours(23, 59, 59, 999);
+    const [salesAgg, voidsAgg] = await Promise.all([
+      this.prisma.ticket.aggregate({
+        where: {
+          pointId: pid,
+          sellerUserId: uid,
+          status: TicketStatus.sold,
+          createdAt: { gte: start, lte: end },
+        },
+        _sum: { totalAmount: true },
+        _count: true,
+      }),
+      this.prisma.ticket.aggregate({
+        where: {
+          pointId: pid,
+          sellerUserId: uid,
+          status: TicketStatus.voided,
+          voidedAt: { gte: start, lte: end },
+        },
+        _sum: { totalAmount: true },
+        _count: true,
+      }),
+    ]);
+    const salesTotal = Number(salesAgg._sum?.totalAmount ?? 0);
+    const voidsTotal = Number(voidsAgg._sum?.totalAmount ?? 0);
+    return {
+      date: safeDate,
+      serverTimeLocal: serverTimeLocalRD(),
+      sales: { totalAmount: salesTotal, ticketCount: salesAgg._count },
+      voids: { count: voidsAgg._count, totalAmount: voidsTotal },
+      net: salesTotal - voidsTotal,
     };
   }
 }

@@ -1,12 +1,22 @@
 import { Controller, Get } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../../prisma/prisma.service';
-import { getTimezone, serverNow, serverTodayISO, serverTimeDisplay } from '../../common/server-time';
+import { getTimeResponse, getTimezone, serverNow, serverTodayISO, serverTimeDisplay } from '../../common/server-time';
 
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
   constructor(private prisma: PrismaService) {}
+
+  /**
+   * Hora del servidor en zona RD. Público para que el POS muestre "Hora servidor (RD)" en login y todas las pantallas.
+   * El POS no debe usar DateTime.now() para nada contable.
+   */
+  @Get('time')
+  @ApiOperation({ summary: 'Server time (RD timezone) for POS' })
+  time() {
+    return getTimeResponse();
+  }
 
   /**
    * Endpoint público para que el POS (celular) pruebe la conexión con el backend.

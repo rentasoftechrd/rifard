@@ -88,3 +88,35 @@ export function serverTimeDisplay(): string {
   });
   return formatter.format(now);
 }
+
+/** Offset en minutos para RD (UTC-4 = -240). */
+export const OFFSET_MINUTES_RD = -240;
+
+/**
+ * Hora del servidor en RD con formato 12h para POS (ej. "05:42:18 PM").
+ */
+export function serverTimeLocalRD(): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+  return formatter.format(now);
+}
+
+/**
+ * Respuesta para GET /time: todo lo que el POS necesita para mostrar y sincronizar hora RD.
+ */
+export function getTimeResponse() {
+  const now = serverNow();
+  return {
+    serverTimeUtc: now.toISOString(),
+    serverTimeLocal: serverTimeLocalRD(),
+    serverDate: serverTodayISO(),
+    timezone: getTimezone(),
+    offsetMinutes: OFFSET_MINUTES_RD,
+  };
+}

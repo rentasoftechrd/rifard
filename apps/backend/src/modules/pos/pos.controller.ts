@@ -90,4 +90,11 @@ export class PosController {
   getMySession(@CurrentUser('sub') userId: string, @Query('deviceId') deviceId?: string) {
     return this.pos.getMySession(userId, deviceId);
   }
+
+  @Get('closeout')
+  @Roles(ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_POS_ADMIN, ROLE_POS_SELLER)
+  @ApiOperation({ summary: 'Cuadre del turno: ventas y anulaciones por punto y vendedor (fecha servidor)' })
+  getCloseout(@CurrentUser('sub') userId: string, @Query('date') dateStr: string, @Query('pointId') pointId: string) {
+    return this.pos.getCloseout(userId, pointId ?? '', dateStr ?? '');
+  }
 }

@@ -110,7 +110,7 @@ class _SelectPointScreenState extends ConsumerState<SelectPointScreen> {
                       if (id != null && id.isNotEmpty) {
                         await setPointId(id);
                         ref.invalidate(posSessionProvider);
-                        if (mounted) context.go('/sell');
+                        if (mounted) context.go('/home');
                       } else {
                         context.go('/printer-setup');
                       }

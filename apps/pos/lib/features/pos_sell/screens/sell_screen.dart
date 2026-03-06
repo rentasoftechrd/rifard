@@ -2,12 +2,92 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/http/api_client.dart';
 import '../../../core/session/pos_session.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/server_time/server_time_provider.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../providers/sell_cart_provider.dart';
+
+/// Tipo de jugada: Q=Quiniela, P=Pale, T=Tripleta, S=Super Pale.
+const _tipoLetters = ['Q', 'P', 'T', 'S'];
+
+/// Formatea dígitos según tipo: Q=00, P/S=00-00, T=00-00-00.
+String _formatNumberByTipo(String digitsOnly, String tipo) {
+  if (digitsOnly.isEmpty) return '';
+  final digits = digitsOnly.replaceAll(RegExp(r'\D'), '');
+  if (tipo == 'Q') return digits.length > 2 ? digits.substring(0, 2) : digits;
+  if (tipo == 'P' || tipo == 'S') {
+    final d = digits.length > 4 ? digits.substring(0, 4) : digits;
+    if (d.length <= 2) return d;
+    return '${d.substring(0, 2)}-${d.substring(2)}';
+  }
+  if (tipo == 'T') {
+    final d = digits.length > 6 ? digits.substring(0, 6) : digits;
+    if (d.length <= 2) return d;
+    if (d.length <= 4) return '${d.substring(0, 2)}-${d.substring(2)}';
+    return '${d.substring(0, 2)}-${d.substring(2, 4)}-${d.substring(4)}';
+  }
+  return digits;
+}
+
+/// Máximo de dígitos por tipo (sin contar guiones).
+int _maxDigitsForTipo(String tipo) => tipo == 'Q' ? 2 : (tipo == 'T' ? 6 : 4);
+
+/// Convierte letra a betType del API.
+String _betTypeFromTipo(String tipo) {
+  switch (tipo) {
+    case 'Q': return 'quiniela';
+    case 'P': return 'pale';
+    case 'T': return 'tripleta';
+    case 'S': return 'superpale';
+    default: return 'quiniela';
+  }
+}
+
+/// Convierte betType del API a letra para mostrar.
+String _tipoLetterFromBetType(String? betType) {
+  switch (betType) {
+    case 'quiniela': return 'Q';
+    case 'pale': return 'P';
+    case 'tripleta': return 'T';
+    case 'superpale': return 'S';
+    default: return 'Q';
+  }
+}
+
+/// Formateador de entrada: solo dígitos y formato 00, 00-00 o 00-00-00 según tipo.
+class _NumberFormatFormatter extends TextInputFormatter {
+  _NumberFormatFormatter(this.tipo);
+  final String tipo;
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final max = _maxDigitsForTipo(tipo);
+    final truncated = digits.length > max ? digits.substring(0, max) : digits;
+    final formatted = _formatNumberByTipo(truncated, tipo);
+    if (formatted == newValue.text) return newValue;
+    final cursor = newValue.selection.baseOffset.clamp(0, newValue.text.length);
+    final digitsBeforeCursor = newValue.text.substring(0, cursor).replaceAll(RegExp(r'\D'), '').length;
+    final d = digitsBeforeCursor > max ? max : digitsBeforeCursor;
+    int newOffset = formatted.length;
+    if (tipo == 'Q') newOffset = d;
+    else if (tipo == 'P' || tipo == 'S') newOffset = d <= 2 ? d : d + 1;
+    else if (tipo == 'T') newOffset = d <= 2 ? d : (d <= 4 ? d + 1 : d + 2);
+    if (newOffset > formatted.length) newOffset = formatted.length;
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: newOffset),
+    );
+  }
+}
 
 /// Intervalo de heartbeat (segundos). El backoffice considera online si last_seen <= 60s.
 const _heartbeatIntervalSeconds = 20;
@@ -43,6 +123,12 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   String? _debugApiUrl;
   /// Resultado del diagnóstico (Probar conexión).
   String? _diagnosticMessage;
+  /// True mientras se cargan loterías y se registra el dispositivo al entrar en la pantalla.
+  bool _loadingInitial = true;
+  final _numberController = TextEditingController();
+  final _amountController = TextEditingController(text: '50');
+  /// Tipo de jugada: Q=Quiniela, P=Pale, T=Tripleta, S=Super Pale.
+  String _tipoJugada = 'Q';
 
   @override
   void initState() {
@@ -60,24 +146,129 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   @override
   void dispose() {
     _heartbeatTimer?.cancel();
+    _numberController.dispose();
+    _amountController.dispose();
     super.dispose();
   }
 
-  Future<void> _initSessionAndLoad() async {
-    final session = await ref.read(posSessionProvider.future);
-    if (!session.hasPoint) {
-      if (mounted) context.go('/select-point');
+  void _addLine() {
+    final numStr = _numberController.text.trim().replaceAll(RegExp(r'\D'), '');
+    if (numStr.isEmpty) {
+      setState(() => _error = 'Ingrese el número');
       return;
     }
-    await _loadLotteries();
-    final result = await _ensureDeviceRegistered();
-    if (mounted) {
-      setState(() {
-        _deviceRegistered = result.ok;
-        _registerDeviceError = result.error;
-      });
+    if (_selectedLotteryId == null || _selectedDrawId == null) {
+      setState(() => _error = 'Seleccione lotería y sorteo');
+      return;
     }
-    _startHeartbeat();
+    final minDigits = _tipoJugada == 'Q' ? 2 : (_tipoJugada == 'T' ? 6 : 4);
+    if (numStr.length < minDigits) {
+      setState(() => _error = 'Número incompleto. $minDigits dígitos para ${_tipoJugada == "Q" ? "Quiniela" : _tipoJugada == "T" ? "Tripleta" : "Pale/Super Pale"}.');
+      return;
+    }
+    final amountRaw = _amountController.text.trim().replaceAll(RegExp(r'[^\d.]'), '');
+    final amount = int.tryParse(amountRaw) ?? double.tryParse(amountRaw)?.toInt();
+    if (amount == null || amount <= 0) {
+      setState(() => _error = 'Ingrese un monto válido');
+      return;
+    }
+    final numbersFormatted = _formatNumberByTipo(numStr, _tipoJugada);
+    setState(() {
+      _error = null;
+      _lines.add({
+        'lotteryId': _selectedLotteryId,
+        'drawId': _selectedDrawId,
+        'betType': _betTypeFromTipo(_tipoJugada),
+        'tipoLetter': _tipoJugada,
+        'numbers': numbersFormatted,
+        'amount': amount,
+      });
+      _numberController.clear();
+    });
+  }
+
+  void _clearCart() {
+    setState(() {
+      _lines.clear();
+      _error = null;
+    });
+  }
+
+  void _goToPayment() {
+    if (_lines.isEmpty) {
+      setState(() => _error = 'Agregue al menos una jugada');
+      return;
+    }
+    if (_selectedLotteryId == null || _selectedDrawId == null) {
+      setState(() => _error = 'Seleccione lotería y sorteo');
+      return;
+    }
+    final lotteryName = _lotteries.cast<Map<String, dynamic>?>().firstWhere((l) => l?['id'] == _selectedLotteryId, orElse: () => null)?['name']?.toString();
+    final drawTime = _draws.cast<Map<String, dynamic>?>().firstWhere((d) => d?['id'] == _selectedDrawId, orElse: () => null)?['drawTime']?.toString() ?? '';
+    final cartLines = _lines.map((l) => CartLine(
+      lotteryId: l['lotteryId'] as String,
+      drawId: l['drawId'] as String,
+      betType: l['betType'] as String? ?? 'quiniela',
+      numbers: l['numbers'] as String,
+      amount: l['amount'] as num,
+      lotteryName: lotteryName,
+      drawTime: drawTime,
+    )).toList();
+    ref.read(sellCartProvider.notifier).setCart(cartLines, lotteryName: lotteryName, drawTime: drawTime);
+    context.push('/payment');
+  }
+
+  Future<void> _initSessionAndLoad() async {
+    if (!mounted) return;
+    setState(() => _loadingInitial = true);
+    try {
+      final session = await ref.read(posSessionProvider.future);
+      if (!session.hasPoint) {
+        if (mounted) context.go('/select-point');
+        return;
+      }
+      final api = ref.read(apiClientProvider);
+      await api.refreshTokenIfExpiredOrSoon(minMinutes: 2);
+      if (!mounted) return;
+      await _loadLotteries();
+      if (!mounted) return;
+      final result = await _ensureDeviceRegistered();
+      if (mounted) {
+        setState(() {
+          _deviceRegistered = result.ok;
+          _registerDeviceError = result.error;
+        });
+      }
+      _startHeartbeat();
+    } finally {
+      if (mounted) setState(() => _loadingInitial = false);
+    }
+  }
+
+  /// Decodifica el payload del JWT (sin verificar firma) y devuelve texto de expiración para diagnóstico.
+  static String _tokenExpiryForDiagnostic(String? token) {
+    if (token == null || token.isEmpty) return 'Sin token';
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return 'Token con formato inválido';
+      String payload = parts[1];
+      payload += '=='.substring(0, (4 - payload.length % 4) % 4);
+      final decoded = utf8.decode(base64Url.decode(payload));
+      final map = jsonDecode(decoded) as Map<String, dynamic>?;
+      final exp = map?['exp'];
+      if (exp == null) return 'Token sin exp';
+      final expSec = exp is int ? exp : (exp as num).toInt();
+      final now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+      if (expSec <= now) {
+        final minAgo = (now - expSec) ~/ 60;
+        return 'Token EXPIRADO hace ~$minAgo min (por eso 401). Cierra sesión y entra de nuevo.';
+      }
+      final dt = DateTime.fromMillisecondsSinceEpoch(expSec * 1000, isUtc: true);
+      final minLeft = (expSec - now) ~/ 60;
+      return 'Token válido hasta ~${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')} UTC ($minLeft min restantes)';
+    } catch (_) {
+      return 'No se pudo leer exp del token';
+    }
   }
 
   /// Prueba conectividad: health (sin auth) y pos/points (con auth). Muestra resultado.
@@ -86,8 +277,14 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     final api = ref.read(apiClientProvider);
     final base = await api.effectiveBaseUrl;
     final session = await ref.read(posSessionProvider.future);
+    final token = await api.token;
     final buffer = StringBuffer();
-    buffer.writeln('Sesión: pointId=${session.pointId ?? "null"} deviceId=${session.deviceId.length > 20 ? "${session.deviceId.substring(0, 20)}…" : session.deviceId}');
+    buffer.writeln('Sesión:');
+    buffer.writeln('  pointId=${session.pointId ?? "null"} (punto de venta)');
+    buffer.writeln('  deviceId=${session.deviceId.length > 20 ? "${session.deviceId.substring(0, 20)}…" : session.deviceId} (terminal)');
+    buffer.writeln('  (No se comparan entre sí: el backend valida pointId con tus puntos asignados y deviceId con el dispositivo.)');
+    buffer.writeln('');
+    buffer.writeln('Token: ${_tokenExpiryForDiagnostic(token)}');
     buffer.writeln('');
     try {
       final healthResp = await api.get('/health/pos-connect');
@@ -342,25 +539,31 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   @override
   Widget build(BuildContext context) {
     final sessionAsync = ref.watch(posSessionProvider);
-    final deviceId = sessionAsync.valueOrNull?.deviceId;
+    final timeAsync = ref.watch(serverTimeProvider);
+    String lotteryName = 'Venta';
+    if (_selectedLotteryId != null) {
+      try {
+        final l = _lotteries.firstWhere((e) => e['id'] == _selectedLotteryId);
+        lotteryName = l['name']?.toString() ?? 'Venta';
+      } catch (_) {}
+    }
+    String drawTimeStr = '';
+    if (_selectedDrawId != null) {
+      try {
+        final d = _draws.firstWhere((e) => e['id'] == _selectedDrawId);
+        drawTimeStr = d['drawTime']?.toString() ?? d['draw_time']?.toString() ?? '';
+      } catch (_) {}
+    }
+    final subtitle = drawTimeStr.isNotEmpty ? '$lotteryName | Sorteo $drawTimeStr' : lotteryName;
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => context.go('/home')),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Venta'),
-            if (deviceId != null)
-              Tooltip(
-                message: deviceId,
-                child: Text(
-                  'Device: ${deviceId.length > 20 ? '${deviceId.substring(0, 20)}…' : deviceId}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ),
+            Text('VENTA - $subtitle', style: const TextStyle(fontSize: 14), overflow: TextOverflow.ellipsis),
+            Text('Hora servidor RD: ${timeAsync.valueOrNull?.displayLabel ?? "—"}', style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7))),
           ],
         ),
         actions: [
@@ -393,7 +596,20 @@ class _SellScreenState extends ConsumerState<SellScreen> {
           TextButton(onPressed: () => context.go('/closeout'), child: const Text('Cierre')),
         ],
       ),
-      body: ListView(
+      body: _loadingInitial
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(color: AppColors.primary),
+                  const SizedBox(height: 16),
+                  Text('Cargando loterías y datos…', style: TextStyle(color: AppColors.textMuted, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  Text('Comprobando conexión con el servidor', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                ],
+              ),
+            )
+          : ListView(
         padding: const EdgeInsets.all(16),
         children: [
           if (kDebugMode && _debugApiUrl != null)
@@ -442,6 +658,141 @@ class _SellScreenState extends ConsumerState<SellScreen> {
             items: _draws.map((d) => DropdownMenuItem(value: d['id']?.toString(), child: Text('${d['drawTime'] ?? d['draw_time']}', style: const TextStyle(color: AppColors.textPrimary)))).toList(),
             onChanged: _selectedLotteryId == null ? null : (v) => setState(() => _selectedDrawId = v),
           ),
+          const SizedBox(height: 16),
+          const Text('Tipo de jugada', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final t in _tipoLetters)
+                ChoiceChip(
+                  label: Text(t, style: TextStyle(color: _tipoJugada == t ? Colors.white : AppColors.textPrimary)),
+                  selected: _tipoJugada == t,
+                  onSelected: (selected) => setState(() {
+                    if (selected) {
+                      _tipoJugada = t;
+                      _numberController.clear();
+                    }
+                  }),
+                  selectedColor: AppColors.secondary,
+                  labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              const SizedBox(width: 8),
+              Text('Q=Quiniela  P=Pale  T=Tripleta  S=Super Pale', style: TextStyle(color: AppColors.textMuted, fontSize: 10)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text('Entrada rápida', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: _numberController,
+                  decoration: InputDecoration(
+                    labelText: 'Número',
+                    hintText: _tipoJugada == 'Q' ? '00' : (_tipoJugada == 'T' ? '00-00-00' : '00-00'),
+                  ),
+                  style: const TextStyle(color: AppColors.textPrimary),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(_maxDigitsForTipo(_tipoJugada)),
+                    _NumberFormatFormatter(_tipoJugada),
+                  ],
+                  onSubmitted: (_) => _addLine(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _amountController,
+                  decoration: const InputDecoration(
+                    labelText: 'Monto',
+                    hintText: '50',
+                  ),
+                  style: const TextStyle(color: AppColors.textPrimary),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.]'))],
+                  onSubmitted: (_) => _addLine(),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _addLine,
+                icon: const Icon(Icons.add, size: 20),
+                label: const Text('Agregar'),
+                style: FilledButton.styleFrom(backgroundColor: AppColors.secondary),
+              ),
+            ],
+          ),
+          if (_lines.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('Jugadas', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            const SizedBox(height: 4),
+            Card(
+              color: AppColors.surface,
+              child: Column(
+                children: [
+                  // Encabezado: Tipo | Número | Monto
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Row(
+                      children: [
+                        SizedBox(width: 28, child: Text('Tipo', style: TextStyle(color: AppColors.textMuted, fontSize: 11, fontWeight: FontWeight.w600))),
+                        Expanded(child: Text('Número', style: TextStyle(color: AppColors.textMuted, fontSize: 11, fontWeight: FontWeight.w600))),
+                        SizedBox(width: 56, child: Text('Monto', style: TextStyle(color: AppColors.textMuted, fontSize: 11, fontWeight: FontWeight.w600))),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  for (var i = 0; i < _lines.length; i++)
+                    ListTile(
+                      dense: true,
+                      title: Row(
+                        children: [
+                          SizedBox(
+                            width: 28,
+                            child: Text(_tipoLetterFromBetType(_lines[i]['betType'] as String?), style: const TextStyle(color: AppColors.secondary, fontWeight: FontWeight.bold, fontSize: 14)),
+                          ),
+                          Expanded(child: Text('${_lines[i]['numbers']}', style: const TextStyle(color: AppColors.textPrimary, fontFamily: 'monospace'))),
+                          Text('\$${_lines[i]['amount']}', style: const TextStyle(color: AppColors.textPrimary)),
+                        ],
+                      ),
+                    ),
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Total:', style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+                        Text('\$${_lines.fold<num>(0, (s, l) => s + (l['amount'] as num)).toStringAsFixed(0)}', style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                OutlinedButton(onPressed: _clearCart, child: const Text('Limpiar')),
+                const SizedBox(width: 8),
+                OutlinedButton(onPressed: () => setState(() => _error = null), child: const Text('Validar')),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _goToPayment,
+                  icon: const Icon(Icons.payment, size: 18),
+                  label: const Text('Ir a Pago'),
+                  style: FilledButton.styleFrom(backgroundColor: AppColors.secondary),
+                ),
+              ],
+            ),
+          ],
           if (_lotteriesError != null) ...[
             const SizedBox(height: 8),
             Container(
@@ -458,14 +809,31 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: () async {
-                      setState(() => _lotteriesError = null);
-                      await _loadLotteries();
-                    },
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('Reintentar cargar loterías'),
-                    style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: () async {
+                          setState(() => _lotteriesError = null);
+                          await ref.read(apiClientProvider).refreshTokenIfExpiredOrSoon(minMinutes: 2);
+                          await _loadLotteries();
+                        },
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('Reintentar cargar loterías'),
+                        style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+                      ),
+                      if (_lotteriesStatus == 401) ...[
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: () async {
+                            await ref.read(apiClientProvider).setToken(null);
+                            if (mounted) context.go('/login');
+                          },
+                          icon: const Icon(Icons.logout, size: 18),
+                          label: const Text('Cerrar sesión'),
+                          style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
@@ -492,6 +860,18 @@ class _SellScreenState extends ConsumerState<SellScreen> {
                   ],
                   const SizedBox(height: 4),
                   Text('Debes entrar con el mismo usuario que tiene el punto asignado en el backoffice (Personas → Puntos). Usa la misma URL del servidor que el backoffice.', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                  if (_registerDeviceStatus == 401) ...[
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () async {
+                        await ref.read(apiClientProvider).setToken(null);
+                        if (mounted) context.go('/login');
+                      },
+                      icon: const Icon(Icons.logout, size: 18),
+                      label: const Text('Cerrar sesión e iniciar de nuevo'),
+                      style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -516,12 +896,6 @@ class _SellScreenState extends ConsumerState<SellScreen> {
             const SizedBox(height: 8),
             Text(_error!, style: const TextStyle(color: AppColors.danger)),
           ],
-          const SizedBox(height: 16),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
-            onPressed: _loading ? null : _sell,
-            child: _loading ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Vender'),
-          ),
         ],
       ),
     );

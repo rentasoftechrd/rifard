@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/http/api_client.dart';
+import '../../../core/server_time/server_time_provider.dart';
+import '../../../core/session/pos_session.dart';
 import '../../../core/theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 
@@ -21,11 +23,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _loading = false;
   bool _testingConnection = false;
   String? _connectionMessage;
+  String _terminalId = '—';
 
   @override
   void initState() {
     super.initState();
     _loadSavedUrl();
+    getDeviceId().then((id) {
+      if (mounted) setState(() => _terminalId = id.length > 10 ? '${id.substring(0, 10)}…' : id);
+    });
   }
 
   Future<void> _loadSavedUrl() async {
@@ -120,8 +126,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final data = resp.body.isNotEmpty ? _parseJson(resp.body) : <String, dynamic>{};
       if (resp.statusCode == 200 || resp.statusCode == 201) {
         final accessToken = data['accessToken'] as String?;
+        final refreshToken = data['refreshToken'] as String?;
         if (accessToken != null) {
-          await api.setToken(accessToken);
+          await api.setTokens(accessToken, refreshToken);
           ref.invalidate(isLoggedInProvider);
           await Future.delayed(const Duration(milliseconds: 100));
         }
@@ -241,17 +248,57 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
                           child: _loading
                               ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                              : const Text('Entrar'),
+                              : const Text('Iniciar sesión'),
                         ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 32),
+                  const Divider(color: AppColors.border),
+                  const SizedBox(height: 12),
+                  _LoginFooter(terminalId: _terminalId, connectionMessage: _connectionMessage),
                 ],
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LoginFooter extends ConsumerWidget {
+  const _LoginFooter({required this.terminalId, this.connectionMessage});
+  final String terminalId;
+  final String? connectionMessage;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final timeAsync = ref.watch(serverTimeProvider);
+    final isOnline = connectionMessage != null && connectionMessage!.toLowerCase().contains('conectado');
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('Terminal: $terminalId', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            const SizedBox(width: 16),
+            Text(
+              'Estado: ${isOnline ? "Online ✅" : "—"}',
+              style: TextStyle(color: isOnline ? AppColors.success : AppColors.textMuted, fontSize: 12),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        timeAsync.when(
+          data: (t) => Text(
+            'Hora servidor (RD): ${t?.displayLabel ?? "—"}',
+            style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+          ),
+          loading: () => const Text('Hora servidor (RD): …', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          error: (_, __) => const Text('Hora servidor (RD): —', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+        ),
+      ],
     );
   }
 }
