@@ -518,14 +518,14 @@ class _LimitFormDialogState extends ConsumerState<_LimitFormDialog> {
     if (widget.type == 'by_number') body['numberKey'] = _numberKeyController.text.trim();
     if (widget.type == 'by_bet_type') body['betType'] = _betType;
 
-    final success = await upsertLimit(ref, body);
+    final errorMsg = await upsertLimit(ref, body);
     if (!mounted) return;
     setState(() => _saving = false);
-    if (success) {
+    if (errorMsg == null) {
       widget.onSaved();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Límite guardado.')));
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error al guardar.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al guardar: $errorMsg')));
     }
   }
 }

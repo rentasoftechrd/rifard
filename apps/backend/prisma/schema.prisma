@@ -288,7 +288,7 @@ model LimitConfig {
   type       LimitType
   lotteryId  String?    @map("lottery_id") @db.Uuid
   drawId     String?    @map("draw_id") @db.Uuid
-  betType    BetType?
+  betType    BetType?   @map("bet_type")
   numberKey  String?    @map("number_key")
   maxPayout  Decimal    @map("max_payout") @db.Decimal(14, 2)
   active     Boolean    @default(true)

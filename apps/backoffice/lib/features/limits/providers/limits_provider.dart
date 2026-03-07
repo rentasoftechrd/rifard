@@ -60,14 +60,21 @@ final limitsListProvider = FutureProvider<List<dynamic>>((ref) async {
 });
 
 /// Crear o actualizar un límite (solo SUPER_ADMIN).
-Future<bool> upsertLimit(WidgetRef ref, Map<String, dynamic> body) async {
+/// Devuelve null si se guardó bien; si falla, devuelve el mensaje de error del servidor.
+Future<String?> upsertLimit(WidgetRef ref, Map<String, dynamic> body) async {
   final api = ref.read(apiClientProvider);
   final resp = await api.put('/limits', body: body);
   if (resp.statusCode >= 200 && resp.statusCode < 300) {
     ref.invalidate(limitsListProvider);
-    return true;
+    return null;
   }
-  return false;
+  try {
+    final data = _parse(resp.body);
+    final m = data['message'];
+    if (m is String) return m;
+    if (m is Map) return (m['message'] ?? m['detail'])?.toString();
+  } catch (_) {}
+  return 'Error ${resp.statusCode}';
 }
 
 /// Eliminar un límite.
