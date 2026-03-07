@@ -9,13 +9,40 @@ const POS_ONLINE_SECONDS = 60;
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
 
-  async dashboardSummary(dateStr: string) {
-    const safeDateStr = ensureDateNotFuture(dateStr);
-    const date = new Date(safeDateStr);
+  /** start (00:00:00) and end (23:59:59.999) in UTC for the given date and range. */
+  private getRangeBounds(date: Date, range: 'day' | 'week' | 'month'): { start: Date; end: Date } {
     const start = new Date(date);
-    start.setUTCHours(0, 0, 0, 0);
     const end = new Date(date);
+    if (range === 'day') {
+      start.setUTCHours(0, 0, 0, 0);
+      end.setUTCHours(23, 59, 59, 999);
+      return { start, end };
+    }
+    if (range === 'week') {
+      const day = date.getUTCDay();
+      const mondayOffset = day === 0 ? -6 : 1 - day;
+      start.setUTCDate(date.getUTCDate() + mondayOffset);
+      start.setUTCHours(0, 0, 0, 0);
+      end.setUTCHours(23, 59, 59, 999);
+      return { start, end };
+    }
+    if (range === 'month') {
+      start.setUTCDate(1);
+      start.setUTCHours(0, 0, 0, 0);
+      end.setUTCHours(23, 59, 59, 999);
+      return { start, end };
+    }
+    start.setUTCHours(0, 0, 0, 0);
     end.setUTCHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  async dashboardSummary(dateStr: string, range: 'day' | 'week' | 'month' = 'day') {
+    const safeDateStr = ensureDateNotFuture(dateStr);
+    const date = new Date(safeDateStr + 'T12:00:00.000Z');
+    const rangeBounds = this.getRangeBounds(date, range);
+    const start = rangeBounds.start;
+    const end = rangeBounds.end;
 
     const [salesAgg, voidsAgg, draws, pendingResults, presenceList, recentResults, todayResults] = await Promise.all([
       this.prisma.ticket.aggregate({
@@ -70,6 +97,7 @@ export class ReportsService {
 
     return {
       date: safeDateStr,
+      range,
       sales: {
         totalAmount: Number(salesAgg._sum?.totalAmount ?? 0),
         ticketCount: salesAgg._count,

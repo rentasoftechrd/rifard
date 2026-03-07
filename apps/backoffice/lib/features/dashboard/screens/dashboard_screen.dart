@@ -33,22 +33,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
-      final now = DateTime.now().toUtc();
-      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      ref.invalidate(dashboardSummaryProvider(dateStr));
+      final serverDate = ref.read(serverDateProvider).valueOrNull;
+      final fallback = DateTime.now().toUtc();
+      final dateStr = serverDate ?? '${fallback.year}-${fallback.month.toString().padLeft(2, '0')}-${fallback.day.toString().padLeft(2, '0')}';
+      final range = ref.read(dashboardRangeFilterProvider);
+      ref.invalidate(dashboardSummaryProvider(DashboardParams(date: dateStr, range: range)));
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // Usar fecha del servidor (Rep. Dominicana) para que coincida con el backend; evita que "hoy" vacío por desfase UTC.
     final serverDateAsync = ref.watch(serverDateProvider);
     final serverDate = serverDateAsync.valueOrNull;
     final fallback = DateTime.now().toUtc();
     final dateStr = serverDate ?? '${fallback.year}-${fallback.month.toString().padLeft(2, '0')}-${fallback.day.toString().padLeft(2, '0')}';
-    final summaryAsync = ref.watch(dashboardSummaryProvider(dateStr));
+    final range = ref.watch(dashboardRangeFilterProvider);
+    final params = DashboardParams(date: dateStr, range: range);
+    final summaryAsync = ref.watch(dashboardSummaryProvider(params));
 
-    ref.listen(dashboardSummaryProvider(dateStr), (prev, next) {
+    ref.listen(dashboardSummaryProvider(params), (prev, next) {
       next.whenData((_) {
         ref.read(lastDashboardRefreshProvider.notifier).state = DateTime.now();
       });
@@ -91,7 +94,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ),
                   const SizedBox(width: 12),
                   IconButton(
-                    onPressed: () => ref.invalidate(dashboardSummaryProvider(dateStr)),
+                    onPressed: () => ref.invalidate(dashboardSummaryProvider(params)),
                     icon: const Icon(Icons.refresh),
                     tooltip: 'Refrescar datos',
                     style: IconButton.styleFrom(foregroundColor: AppColors.primary),
@@ -100,9 +103,34 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilterChip(
+                label: const Text('Hoy'),
+                selected: range == 'day',
+                onSelected: (_) => ref.read(dashboardRangeFilterProvider.notifier).state = 'day',
+                selectedColor: AppColors.primary.withOpacity(0.2),
+              ),
+              FilterChip(
+                label: const Text('Esta semana'),
+                selected: range == 'week',
+                onSelected: (_) => ref.read(dashboardRangeFilterProvider.notifier).state = 'week',
+                selectedColor: AppColors.primary.withOpacity(0.2),
+              ),
+              FilterChip(
+                label: const Text('Este mes'),
+                selected: range == 'month',
+                onSelected: (_) => ref.read(dashboardRangeFilterProvider.notifier).state = 'month',
+                selectedColor: AppColors.primary.withOpacity(0.2),
+              ),
+            ],
+          ),
           const SizedBox(height: 24),
           summaryAsync.when(
-            data: (data) => _DashboardContent(data: data, dateStr: dateStr, ref: ref),
+            data: (data) => _DashboardContent(data: data, dateStr: dateStr, range: range, ref: ref),
             loading: () => const Center(child: Padding(padding: EdgeInsets.all(48), child: CircularProgressIndicator())),
             error: (e, _) => Card(
               child: Padding(
@@ -123,10 +151,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 }
 
+String _rangeLabel(String range) {
+  switch (range) {
+    case 'week':
+      return 'Esta semana';
+    case 'month':
+      return 'Este mes';
+    default:
+      return 'Hoy';
+  }
+}
+
 class _DashboardContent extends StatelessWidget {
-  const _DashboardContent({required this.data, required this.dateStr, required this.ref});
+  const _DashboardContent({required this.data, required this.dateStr, required this.range, required this.ref});
   final Map<String, dynamic> data;
   final String dateStr;
+  final String range;
   final WidgetRef ref;
 
   @override
@@ -147,6 +187,7 @@ class _DashboardContent extends StatelessWidget {
     final voidAmount = (voids['totalAmount'] as num?)?.toDouble() ?? 0.0;
     final posOnline = pos['online'] as int? ?? 0;
     final posTotal = pos['total'] as int? ?? 0;
+    final rangeLabel = _rangeLabel(range);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -159,7 +200,7 @@ class _DashboardContent extends StatelessWidget {
               runSpacing: 16,
               children: [
                 _MetricCard(
-                  title: 'Ventas hoy',
+                  title: 'Ventas $rangeLabel',
                   value: _formatMoney(totalSales),
                   subtitle: '$ticketCount tickets',
                   icon: Icons.point_of_sale,
@@ -168,12 +209,12 @@ class _DashboardContent extends StatelessWidget {
                 _MetricCard(
                   title: 'Tickets vendidos',
                   value: '$ticketCount',
-                  subtitle: 'Hoy',
+                  subtitle: rangeLabel,
                   icon: Icons.confirmation_number,
                   color: AppColors.secondary,
                 ),
                 _MetricCard(
-                  title: 'Anulaciones hoy',
+                  title: 'Anulaciones $rangeLabel',
                   value: '$voidCount',
                   subtitle: _formatMoney(voidAmount),
                   icon: Icons.cancel_outlined,
@@ -475,7 +516,8 @@ class _DashboardContent extends StatelessWidget {
     final resp = await api.post('/draws/generate', queryParams: {'date': dateStr}, body: {});
     if (context.mounted) {
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        ref.invalidate(dashboardSummaryProvider(dateStr));
+        final range = ref.read(dashboardRangeFilterProvider);
+        ref.invalidate(dashboardSummaryProvider(DashboardParams(date: dateStr, range: range)));
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Sorteos generados')));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${resp.body}')));

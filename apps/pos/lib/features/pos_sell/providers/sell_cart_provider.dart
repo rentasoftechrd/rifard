@@ -53,6 +53,9 @@ class SellCartState {
 /// Provider del carrito: lo llena la pantalla Ventas y lo lee la pantalla Pago.
 final sellCartProvider = StateNotifierProvider<SellCartNotifier, SellCartState>((ref) => SellCartNotifier());
 
+/// Lo pone en true el Checkout antes de ir a /sell para que la pantalla de ventas limpie el formulario.
+final clearSellFormAfterPaymentProvider = StateProvider<bool>((ref) => false);
+
 class SellCartNotifier extends StateNotifier<SellCartState> {
   SellCartNotifier() : super(const SellCartState());
 

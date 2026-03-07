@@ -15,10 +15,13 @@ export class ReportsController {
   constructor(private reports: ReportsService) {}
 
   @Get('dashboard-summary')
-  @ApiOperation({ summary: 'Dashboard summary for date (sales, voids, draws, exposure, pending results, POS)' })
-  dashboardSummary(@Query('date') date?: string) {
+  @ApiOperation({ summary: 'Dashboard summary; date + optional range: day (default), week, month' })
+  dashboardSummary(
+    @Query('date') date?: string,
+    @Query('range') range?: 'day' | 'week' | 'month',
+  ) {
     const d = date || new Date().toISOString().slice(0, 10);
-    return this.reports.dashboardSummary(d);
+    return this.reports.dashboardSummary(d, range ?? 'day');
   }
 
   @Get('daily-sales')

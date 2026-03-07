@@ -126,13 +126,16 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   /// True mientras se cargan loterías y se registra el dispositivo al entrar en la pantalla.
   bool _loadingInitial = true;
   final _numberController = TextEditingController();
-  final _amountController = TextEditingController(text: '50');
+  final _amountController = TextEditingController();
   /// Tipo de jugada: Q=Quiniela, P=Pale, T=Tripleta, S=Super Pale.
   String _tipoJugada = 'Q';
+  final _focusNumber = FocusNode();
+  final _focusAmount = FocusNode();
 
   @override
   void initState() {
     super.initState();
+    _numberController.addListener(_onNumberChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initSessionAndLoad();
       if (kDebugMode) {
@@ -146,9 +149,21 @@ class _SellScreenState extends ConsumerState<SellScreen> {
   @override
   void dispose() {
     _heartbeatTimer?.cancel();
+    _numberController.removeListener(_onNumberChanged);
     _numberController.dispose();
     _amountController.dispose();
+    _focusNumber.dispose();
+    _focusAmount.dispose();
     super.dispose();
+  }
+
+  void _onNumberChanged() {
+    final digits = _numberController.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length >= _maxDigitsForTipo(_tipoJugada)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focusAmount.requestFocus();
+      });
+    }
   }
 
   void _addLine() {
@@ -188,6 +203,9 @@ class _SellScreenState extends ConsumerState<SellScreen> {
         'amount': amount,
       });
       _numberController.clear();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNumber.requestFocus();
     });
   }
 
@@ -513,6 +531,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
     final resp = await api.get('/draws', queryParams: {'date': date, 'lotteryId': _selectedLotteryId!});
     if (resp.statusCode == 200) {
       final data = _parseList(resp.body);
+      final open = data.where((d) => (d['displayStatus'] ?? d['display_status']) != 'closed').toList();
       setState(() {
         _draws = data;
         if (_selectedDrawId != null) {
@@ -523,6 +542,10 @@ class _SellScreenState extends ConsumerState<SellScreen> {
           if (sel != null && (sel['displayStatus'] ?? sel['display_status']) == 'closed') {
             _selectedDrawId = null;
           }
+        }
+        // Si la lotería tiene un solo sorteo abierto, usarlo sin preguntar.
+        if (open.length == 1) {
+          _selectedDrawId = open.first['id']?.toString();
         }
       });
     }
@@ -603,6 +626,13 @@ class _SellScreenState extends ConsumerState<SellScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final shouldClearForm = ref.watch(clearSellFormAfterPaymentProvider);
+    if (shouldClearForm) {
+      ref.read(clearSellFormAfterPaymentProvider.notifier).state = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() { _lines.clear(); _error = null; });
+      });
+    }
     final sessionAsync = ref.watch(posSessionProvider);
     final timeAsync = ref.watch(serverTimeProvider);
     String lotteryName = 'Venta';
@@ -710,19 +740,29 @@ class _SellScreenState extends ConsumerState<SellScreen> {
             },
           ),
           const SizedBox(height: 8),
-          DropdownButtonFormField<String>(
-            value: _drawsOpen.any((d) => d['id'] == _selectedDrawId) ? _selectedDrawId : null,
-            decoration: InputDecoration(
-              labelText: 'Sorteo',
-              filled: true,
-              fillColor: AppColors.surface,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.border)),
-            ),
-            dropdownColor: AppColors.surface,
-            items: _drawsOpen.map((d) => DropdownMenuItem(value: d['id']?.toString(), child: Text('${d['drawTime'] ?? d['draw_time']}', style: const TextStyle(color: AppColors.textPrimary)))).toList(),
-            onChanged: _selectedLotteryId == null ? null : (v) => setState(() => _selectedDrawId = v),
-          ),
+          _drawsOpen.length == 1
+              ? InputDecorator(
+                  decoration: InputDecoration(
+                    labelText: 'Sorteo',
+                    filled: true,
+                    fillColor: AppColors.surface,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: Text('${_drawsOpen.first['drawTime'] ?? _drawsOpen.first['draw_time'] ?? '—'}', style: const TextStyle(color: AppColors.textPrimary)),
+                )
+              : DropdownButtonFormField<String>(
+                  value: _drawsOpen.any((d) => d['id'] == _selectedDrawId) ? _selectedDrawId : null,
+                  decoration: InputDecoration(
+                    labelText: 'Sorteo',
+                    filled: true,
+                    fillColor: AppColors.surface,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppColors.border)),
+                  ),
+                  dropdownColor: AppColors.surface,
+                  items: _drawsOpen.map((d) => DropdownMenuItem(value: d['id']?.toString(), child: Text('${d['drawTime'] ?? d['draw_time']}', style: const TextStyle(color: AppColors.textPrimary)))).toList(),
+                  onChanged: _selectedLotteryId == null ? null : (v) => setState(() => _selectedDrawId = v),
+                ),
           const SizedBox(height: 16),
           const Text('Tipo de jugada', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
           const SizedBox(height: 4),
@@ -756,6 +796,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
               Expanded(
                 flex: 2,
                 child: TextField(
+                  focusNode: _focusNumber,
                   controller: _numberController,
                   decoration: InputDecoration(
                     labelText: 'Número',
@@ -774,6 +815,7 @@ class _SellScreenState extends ConsumerState<SellScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: TextField(
+                  focusNode: _focusAmount,
                   controller: _amountController,
                   decoration: const InputDecoration(
                     labelText: 'Monto',
