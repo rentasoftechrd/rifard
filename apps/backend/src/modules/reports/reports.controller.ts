@@ -3,13 +3,13 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { ROLE_ADMIN, ROLE_POS_ADMIN, ROLE_SUPER_ADMIN } from '../../common/constants/roles';
+import { ROLE_ADMIN, ROLE_OPERADOR_BACKOFFICE, ROLE_POS_ADMIN, ROLE_SUPER_ADMIN } from '../../common/constants/roles';
 import { ReportsService } from './reports.service';
 
 @ApiTags('reports')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_POS_ADMIN)
+@Roles(ROLE_SUPER_ADMIN, ROLE_ADMIN, ROLE_OPERADOR_BACKOFFICE, ROLE_POS_ADMIN)
 @Controller('reports')
 export class ReportsController {
   constructor(private reports: ReportsService) {}

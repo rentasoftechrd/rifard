@@ -5,9 +5,11 @@ import { AuditService } from '../audit/audit.service';
 import { PayoutsService } from '../payouts/payouts.service';
 import { validateAndNormalizeNumbers } from '../../common/number-rules';
 import { getDrawCloseAndDrawAt, canVoid } from './draw-schedule.helper';
+import { formatTicketDateAndTime, getTicketQrUrl } from './ticket-display.helper';
 import { calculatePotentialPayout } from './payout.helper';
 import { isLineWinner, DrawResultsApproved } from './winning.helper';
 import { CreateTicketDto, VoidTicketDto } from './dto';
+import { TicketNumberService } from './ticket-number.service';
 
 @Injectable()
 export class TicketsService {
@@ -15,6 +17,7 @@ export class TicketsService {
     private prisma: PrismaService,
     private audit: AuditService,
     private payouts: PayoutsService,
+    private ticketNumber: TicketNumberService,
   ) {}
 
   async create(dto: CreateTicketDto, userId: string) {
@@ -113,10 +116,11 @@ export class TicketsService {
           }
         }
 
-        const ticketCode = dto.ticketCode ?? `P-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const ticketNumber = await this.ticketNumber.getNextTicketNumber(tx);
         const ticket = await tx.ticket.create({
           data: {
-            ticketCode,
+            ticketCode: ticketNumber,
+            ticketNumber,
             pointId: dto.pointId,
             deviceId: dto.deviceId,
             sellerUserId: userId,
@@ -179,7 +183,7 @@ export class TicketsService {
     if (!drawId) throw new BadRequestException('Ticket has no lines');
     const { drawCloseAt, drawAt } = await getDrawCloseAndDrawAt(this.prisma, drawId, timezone);
     const now = new Date();
-    const check = canVoid(ticket.printedAt, now, drawCloseAt, drawAt);
+    const check = canVoid(ticket.createdAt, ticket.printedAt, now, drawCloseAt, drawAt);
     if (!check.ok) throw new BadRequestException({ code: check.code, message: check.code });
 
     await this.prisma.ticket.update({
@@ -201,9 +205,24 @@ export class TicketsService {
     return this.getByCode(ticket.ticketCode);
   }
 
+  /** Enrich ticket with display date/time (America/Santo_Domingo) and qrValue for printing */
+  private enrichTicketForDisplay<T extends { createdAt: Date; ticketNumber: string | null; ticketCode: string }>(ticket: T): T & { date: string; time: string; qrValue: string } {
+    const { date, time } = formatTicketDateAndTime(ticket.createdAt);
+    const number = ticket.ticketNumber ?? ticket.ticketCode;
+    return {
+      ...ticket,
+      date,
+      time,
+      qrValue: getTicketQrUrl(number),
+    };
+  }
+
   async getByCode(code: string) {
-    const ticket = await this.prisma.ticket.findUnique({
-      where: { ticketCode: code },
+    const codeTrimmed = code.trim();
+    const ticket = await this.prisma.ticket.findFirst({
+      where: {
+        OR: [{ ticketCode: codeTrimmed }, { ticketNumber: codeTrimmed }],
+      },
       include: {
         lines: { include: { lottery: true, draw: true } },
         point: true,
@@ -211,7 +230,47 @@ export class TicketsService {
       },
     });
     if (!ticket) throw new NotFoundException('Ticket not found');
-    return ticket;
+    return this.enrichTicketForDisplay(ticket);
+  }
+
+  async getByTicketNumber(ticketNumber: string) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { ticketNumber: ticketNumber.trim() },
+      include: {
+        lines: { include: { lottery: true, draw: true } },
+        point: true,
+        seller: { select: { id: true, fullName: true } },
+      },
+    });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    return this.enrichTicketForDisplay(ticket);
+  }
+
+  /**
+   * Public validation for QR scan: returns minimal data for ticket verification page.
+   * Does not throw; returns valid: false when not found.
+   */
+  async getPublicValidation(ticketNumber: string): Promise<{
+    valid: boolean;
+    ticketNumber?: string;
+    status?: string;
+    totalAmount?: string;
+    message?: string;
+  }> {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { ticketNumber: ticketNumber.trim() },
+      select: { ticketNumber: true, status: true, totalAmount: true },
+    });
+    if (!ticket) {
+      return { valid: false, message: 'Ticket no encontrado' };
+    }
+    return {
+      valid: true,
+      ticketNumber: ticket.ticketNumber ?? undefined,
+      status: ticket.status,
+      totalAmount: String(ticket.totalAmount),
+      message: ticket.status === 'voided' ? 'Ticket anulado' : ticket.status === 'paid' ? 'Ticket ya cobrado' : undefined,
+    };
   }
 
   /**
@@ -219,8 +278,11 @@ export class TicketsService {
    * Si el ticket ya está pagado, se indica para evitar doble cobro en otro punto.
    */
   async getByCodeForPayment(code: string) {
-    const ticket = await this.prisma.ticket.findUnique({
-      where: { ticketCode: code.trim() },
+    const codeTrimmed = code.trim();
+    const ticket = await this.prisma.ticket.findFirst({
+      where: {
+        OR: [{ ticketCode: codeTrimmed }, { ticketNumber: codeTrimmed }],
+      },
       include: {
         lines: { include: { lottery: true, draw: true } },
         point: true,

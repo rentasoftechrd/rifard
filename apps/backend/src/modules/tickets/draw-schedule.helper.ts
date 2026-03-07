@@ -1,6 +1,6 @@
 import { PrismaService } from '../../prisma/prisma.service';
 
-const VOID_WINDOW_MINUTES = 5;
+const VOID_WINDOW_MINUTES = parseInt(process.env.VOID_WINDOW_MINUTES ?? '5', 10) || 5;
 
 export async function getDrawCloseAndDrawAt(
   prisma: PrismaService,
@@ -22,9 +22,13 @@ export async function getDrawCloseAndDrawAt(
   return { drawCloseAt, drawAt, closeMinutesBefore };
 }
 
-export function canVoid(printedAt: Date, now: Date, drawCloseAt: Date, drawAt: Date): { ok: boolean; code?: string } {
+/**
+ * @param soldAt - ticket creation/sale time (server); void window is from this time
+ * @param printedAt - required (ticket must be printed before void)
+ */
+export function canVoid(soldAt: Date, printedAt: Date | null, now: Date, drawCloseAt: Date, drawAt: Date): { ok: boolean; code?: string } {
   if (!printedAt) return { ok: false, code: 'TICKET_NOT_PRINTED' };
-  const elapsedMs = now.getTime() - printedAt.getTime();
+  const elapsedMs = now.getTime() - soldAt.getTime();
   if (elapsedMs > VOID_WINDOW_MINUTES * 60 * 1000) return { ok: false, code: 'VOID_WINDOW_EXPIRED' };
   if (now >= drawCloseAt) return { ok: false, code: 'DRAW_ALREADY_CLOSED' };
   if (now >= drawAt) return { ok: false, code: 'DRAW_ALREADY_HELD' };

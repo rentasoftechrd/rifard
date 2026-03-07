@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { ROLE_POS_SELLER, ROLE_POS_ADMIN, ROLE_ADMIN, ROLE_SUPER_ADMIN } from '../../common/constants/roles';
+import { ROLE_OPERADOR_BACKOFFICE, ROLE_POS_SELLER, ROLE_POS_ADMIN, ROLE_ADMIN, ROLE_SUPER_ADMIN } from '../../common/constants/roles';
 import { PosService } from './pos.service';
 import { CreatePosPointDto } from './dto/create-pos-point.dto';
 import { UpdatePosPointDto } from './dto/update-pos-point.dto';
@@ -64,7 +64,7 @@ export class PosController {
   }
 
   @Get('connected')
-  @Roles(ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_POS_ADMIN, ROLE_POS_SELLER)
+  @Roles(ROLE_ADMIN, ROLE_SUPER_ADMIN, ROLE_OPERADOR_BACKOFFICE, ROLE_POS_ADMIN, ROLE_POS_SELLER)
   @ApiOperation({ summary: 'List connected POS (online/offline by last_seen)' })
   getConnected() {
     return this.pos.getConnected();

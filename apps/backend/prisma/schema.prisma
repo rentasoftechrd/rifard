@@ -220,9 +220,16 @@ model PosPresence {
   @@map("pos_presence")
 }
 
+model TicketDailySequence {
+  date       DateTime @id @db.Date
+  nextValue  Int      @default(1) @map("next_value")
+  @@map("ticket_daily_sequence")
+}
+
 model Ticket {
   id           String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   ticketCode   String        @unique @map("ticket_code")
+  ticketNumber String?       @unique @map("ticket_number")
   pointId      String        @map("point_id") @db.Uuid
   deviceId     String        @map("device_id")
   sellerUserId String        @map("seller_user_id") @db.Uuid

@@ -47,9 +47,16 @@ export class TicketsController {
 
   @Get('code/:code')
   @Roles(ROLE_POS_SELLER)
-  @ApiOperation({ summary: 'Get ticket by code' })
+  @ApiOperation({ summary: 'Get ticket by code or ticket number' })
   getByCode(@Param('code') code: string) {
     return this.tickets.getByCode(code);
+  }
+
+  @Get('number/:ticketNumber')
+  @Roles(ROLE_POS_SELLER, ROLE_OPERADOR_BACKOFFICE, ROLE_ADMIN, ROLE_SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get ticket by ticket number (for reprint)' })
+  getByTicketNumber(@Param('ticketNumber') ticketNumber: string) {
+    return this.tickets.getByTicketNumber(ticketNumber);
   }
 
   @Post(':id/pay')
