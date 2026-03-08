@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:thermal_printer_plus/thermal_printer.dart';
 import '../../../core/http/api_client.dart';
 import '../../../core/printer/printer_provider.dart';
 import '../../../core/printer/printer_service.dart';
@@ -49,26 +48,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   /// Envía el ticket a la impresora configurada. Devuelve true si imprimió, false si no hay impresora o falló.
   Future<bool> _printTicketIfConfigured(Map<String, dynamic> ticketData) async {
     final selected = ref.read(selectedPrinterProvider);
-    if (selected == null || selected.address == null || selected.address!.isEmpty) return false;
-    try {
-      final bytes = await buildTicketBytes(ticketData);
-      if (bytes.isEmpty) return false;
-      await Future.delayed(const Duration(milliseconds: 300));
-      final connected = await PrinterManager.instance.connect(
-        type: PrinterType.bluetooth,
-        model: BluetoothPrinterInput(
-          address: selected.address!,
-          name: selected.name,
-          isBle: false,
-          autoConnect: false,
-        ),
-      );
-      if (!connected) return false;
-      final ok = await PrinterManager.instance.send(type: PrinterType.bluetooth, bytes: bytes);
-      return ok;
-    } catch (_) {
-      return false;
-    }
+    if (selected == null) return false;
+    final paperMm = ref.read(printerPaperWidthMmProvider);
+    return sendTicketToPrinter(ticketData, selected, paperWidthMm: paperMm);
   }
 
   Future<void> _confirmarPago() async {
@@ -96,8 +78,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         'lines': cart.lines.map((l) => l.toTicketLine()).toList(),
       });
       final data = resp.body.isNotEmpty ? json.decode(resp.body) as Map<String, dynamic> : <String, dynamic>{};
-      if (resp.statusCode == 200 || resp.statusCode == 201) {
-        // Ticket guardado en BD. Obtener ticket completo para imprimir (misma forma que detalle).
+        if (resp.statusCode == 200 || resp.statusCode == 201) {
+        // Ticket guardado en BD (toda la data queda guardada). Obtener ticket completo para imprimir.
         Map<String, dynamic>? ticketForPrint = data;
         final code = data['ticketCode'] ?? data['ticket_code']?.toString();
         if (code != null && code.toString().isNotEmpty) {
@@ -108,26 +90,13 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             }
           } catch (_) {}
         }
-        ref.read(sellCartProvider.notifier).clear();
+        // No limpiar carrito ni formulario aquí: la nueva transacción se inicia después de imprimir.
+        if (ticketForPrint != null) {
+          ref.read(pendingPrintTicketProvider.notifier).state = ticketForPrint;
+        }
         if (mounted) {
           setState(() => _loading = false);
-          final printed = ticketForPrint != null ? await _printTicketIfConfigured(ticketForPrint) : false;
-          if (mounted) {
-            if (!printed) {
-              final hasPrinter = ref.read(selectedPrinterProvider) != null;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    hasPrinter
-                        ? 'Ticket guardado. No se pudo imprimir.'
-                        : 'Ticket guardado. Configure una impresora en menú para imprimir.',
-                  ),
-                ),
-              );
-            }
-            ref.read(clearSellFormAfterPaymentProvider.notifier).state = true;
-            context.go('/sell');
-          }
+          context.go('/sell');
         }
       } else {
         String msg = _extractErrorMessage(data, resp.statusCode);

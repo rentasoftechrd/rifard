@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -36,6 +36,24 @@ export class TicketsController {
   @ApiOperation({ summary: 'Void ticket (5min window + draw not closed)' })
   void(@Param('id') id: string, @Body() dto: VoidTicketDto, @CurrentUser('sub') userId: string) {
     return this.tickets.void(id, dto, userId);
+  }
+
+  @Get('winners/history')
+  @Roles(...ROLES_PAYMENT)
+  @ApiOperation({ summary: 'List winning tickets in date range (history)' })
+  getWinnersHistory(@Query('from') from: string, @Query('to') to: string) {
+    const today = new Date().toISOString().slice(0, 10);
+    const fromD = from?.trim() || today;
+    const toD = to?.trim() || today;
+    return this.tickets.getWinningTicketsHistory(fromD, toD);
+  }
+
+  @Get('winners')
+  @Roles(...ROLES_PAYMENT)
+  @ApiOperation({ summary: 'List winning tickets for a date (optional lottery filter)' })
+  getWinners(@Query('date') date: string, @Query('lotteryId') lotteryId?: string) {
+    const d = date && date.trim() ? date.trim() : new Date().toISOString().slice(0, 10);
+    return this.tickets.getWinningTickets(d, lotteryId?.trim() || undefined);
   }
 
   @Get('code/:code/payment')

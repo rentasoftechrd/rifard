@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { BetType } from '@prisma/client';
+import { BetType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { PayoutsService } from '../payouts/payouts.service';
@@ -330,6 +330,7 @@ export class TicketsService {
       ticket: {
         id: ticket.id,
         ticketCode: ticket.ticketCode,
+        ticketNumber: ticket.ticketNumber,
         status: ticket.status,
         totalAmount: ticket.totalAmount,
         printedAt: ticket.printedAt,
@@ -344,6 +345,285 @@ export class TicketsService {
       canBePaid,
       message: ticket.status === 'paid' ? 'Este ticket ya fue pagado.' : undefined,
     };
+  }
+
+  /**
+   * Lista tickets ganadores para una fecha. Usa vista v_winning_ticket_lines si existe; si no, lógica Prisma.
+   */
+  async getWinningTickets(date: string, lotteryId?: string) {
+    const dateNorm = date?.trim();
+    if (!dateNorm || !/^\d{4}-\d{2}-\d{2}$/.test(dateNorm)) return [];
+
+    try {
+      const rows = await this.prisma.$queryRaw<Array<Record<string, unknown>>>(
+        lotteryId
+          ? Prisma.sql`SELECT * FROM v_winning_ticket_lines WHERE draw_date = ${dateNorm}::date AND lottery_id = ${lotteryId}::uuid`
+          : Prisma.sql`SELECT * FROM v_winning_ticket_lines WHERE draw_date = ${dateNorm}::date`,
+      );
+      return this.buildWinningTicketsOutput(rows, lotteryId, false);
+    } catch {
+      return this.getWinningTicketsLegacy(dateNorm, lotteryId);
+    }
+  }
+
+  /**
+   * Lista tickets ganadores en un rango de fechas (historial). Usa vista si existe; si no, lógica Prisma.
+   */
+  async getWinningTicketsHistory(from: string, to: string) {
+    const fromNorm = from?.trim();
+    const toNorm = to?.trim();
+    if (!fromNorm || !toNorm || !/^\d{4}-\d{2}-\d{2}$/.test(fromNorm) || !/^\d{4}-\d{2}-\d{2}$/.test(toNorm)) return [];
+
+    try {
+      const rows = await this.prisma.$queryRaw<Array<Record<string, unknown>>>(
+        Prisma.sql`SELECT * FROM v_winning_ticket_lines WHERE draw_date >= ${fromNorm}::date AND draw_date <= ${toNorm}::date`,
+      );
+      return this.buildWinningTicketsOutput(rows, undefined, true);
+    } catch {
+      return this.getWinningTicketsHistoryLegacy(fromNorm, toNorm);
+    }
+  }
+
+  /** Fallback sin vista: lista ganadores por fecha con Prisma. */
+  private async getWinningTicketsLegacy(date: string, lotteryId?: string) {
+    const start = new Date(date + 'T00:00:00.000Z');
+    const end = new Date(date + 'T23:59:59.999Z');
+    const draws = await this.prisma.draw.findMany({
+      where: { drawDate: { gte: start, lte: end }, drawResult: { status: 'approved' } },
+      select: { id: true, lotteryId: true, drawTime: true, lottery: { select: { name: true } } },
+    });
+    const drawIds = draws.map((d) => d.id);
+    if (drawIds.length === 0) return [];
+    const ticketIds = await this.prisma.ticketLine.findMany({
+      where: { drawId: { in: drawIds }, ticket: { status: { not: 'voided' } } },
+      select: { ticketId: true },
+      distinct: ['ticketId'],
+    }).then((r) => [...new Set(r.map((x) => x.ticketId))]);
+    if (ticketIds.length === 0) return [];
+    const resultsByDraw = await this.prisma.drawResult.findMany({ where: { drawId: { in: drawIds }, status: 'approved' } }).then((list) => {
+      const map = new Map<string, DrawResultsApproved>();
+      for (const dr of list) {
+        const r = (dr.results as Record<string, string>) ?? {};
+        map.set(dr.drawId, { primera: r.primera ?? '', segunda: r.segunda ?? '', tercera: r.tercera ?? '' });
+      }
+      return map;
+    });
+    const tickets = await this.prisma.ticket.findMany({
+      where: { id: { in: ticketIds } },
+      include: { lines: { include: { lottery: true, draw: true } }, point: true, seller: { select: { id: true, fullName: true } }, paidBy: { select: { id: true, fullName: true } } },
+    });
+    const out: Array<{ ticket: Record<string, unknown>; linesWithWinning: Array<Record<string, unknown>>; totalWinningAmount: number; canBePaid: boolean; lotteryName: string; drawTime: string }> = [];
+    for (const ticket of tickets) {
+      const linesWithWinning = ticket.lines.map((line) => {
+        const res = resultsByDraw.get(line.drawId);
+        const isWinner = res ? isLineWinner(line.betType, line.numbers, res) : false;
+        return { ...line, isWinner, winningPayout: isWinner ? Number(line.potentialPayout) : 0 };
+      });
+      const total = linesWithWinning.reduce((s, l) => s + (l.winningPayout ?? 0), 0);
+      if (total <= 0) continue;
+      if (lotteryId && !ticket.lines.some((l) => l.lotteryId === lotteryId)) continue;
+      const first = ticket.lines[0];
+      out.push({
+        ticket: { id: ticket.id, ticketCode: ticket.ticketCode, ticketNumber: ticket.ticketNumber, status: ticket.status, totalAmount: ticket.totalAmount, printedAt: ticket.printedAt, paidAt: ticket.paidAt, paidBy: ticket.paidBy, point: ticket.point, seller: ticket.seller, createdAt: ticket.createdAt },
+        linesWithWinning,
+        totalWinningAmount: total,
+        canBePaid: ticket.status === 'sold' && total > 0,
+        lotteryName: first?.lottery?.name ?? '—',
+        drawTime: first?.draw?.drawTime ?? '—',
+      });
+    }
+    out.sort((a, b) => (a.lotteryName ?? '').localeCompare(b.lotteryName ?? '') || (a.drawTime ?? '').localeCompare(b.drawTime ?? '') || ((a.ticket.createdAt as Date)?.getTime?.() ?? 0) - ((b.ticket.createdAt as Date)?.getTime?.() ?? 0));
+    return out;
+  }
+
+  /** Fallback sin vista: historial de ganadores con Prisma. */
+  private async getWinningTicketsHistoryLegacy(from: string, to: string) {
+    const fromD = new Date(from + 'T00:00:00.000Z');
+    const toD = new Date(to + 'T23:59:59.999Z');
+    const draws = await this.prisma.draw.findMany({
+      where: { drawDate: { gte: fromD, lte: toD }, drawResult: { status: 'approved' } },
+      select: { id: true, drawTime: true, drawDate: true, lottery: { select: { name: true } } },
+    });
+    const drawIds = draws.map((d) => d.id);
+    if (drawIds.length === 0) return [];
+    const ticketIds = await this.prisma.ticketLine.findMany({
+      where: { drawId: { in: drawIds }, ticket: { status: { not: 'voided' } } },
+      select: { ticketId: true },
+      distinct: ['ticketId'],
+    }).then((r) => [...new Set(r.map((x) => x.ticketId))]);
+    if (ticketIds.length === 0) return [];
+    const resultsByDraw = await this.prisma.drawResult.findMany({ where: { drawId: { in: drawIds }, status: 'approved' } }).then((list) => {
+      const map = new Map<string, DrawResultsApproved>();
+      for (const dr of list) {
+        const r = (dr.results as Record<string, string>) ?? {};
+        map.set(dr.drawId, { primera: r.primera ?? '', segunda: r.segunda ?? '', tercera: r.tercera ?? '' });
+      }
+      return map;
+    });
+    const tickets = await this.prisma.ticket.findMany({
+      where: { id: { in: ticketIds } },
+      include: { lines: { include: { lottery: true, draw: true } }, point: true, seller: { select: { id: true, fullName: true } }, paidBy: { select: { id: true, fullName: true } } },
+    });
+    const out: Array<{ ticket: Record<string, unknown>; linesWithWinning: Array<Record<string, unknown>>; totalWinningAmount: number; canBePaid: boolean; lotteryName: string; drawTime: string; drawDate: string }> = [];
+    for (const ticket of tickets) {
+      const linesWithWinning = ticket.lines.map((line) => {
+        const res = resultsByDraw.get(line.drawId);
+        const isWinner = res ? isLineWinner(line.betType, line.numbers, res) : false;
+        return { ...line, isWinner, winningPayout: isWinner ? Number(line.potentialPayout) : 0 };
+      });
+      const total = linesWithWinning.reduce((s, l) => s + (l.winningPayout ?? 0), 0);
+      if (total <= 0) continue;
+      const first = ticket.lines[0];
+      const drawDate = first?.draw?.drawDate ? new Date(first.draw.drawDate).toISOString().slice(0, 10) : '—';
+      out.push({
+        ticket: { id: ticket.id, ticketCode: ticket.ticketCode, ticketNumber: ticket.ticketNumber, status: ticket.status, totalAmount: ticket.totalAmount, printedAt: ticket.printedAt, paidAt: ticket.paidAt, paidBy: ticket.paidBy, point: ticket.point, seller: ticket.seller, createdAt: ticket.createdAt },
+        linesWithWinning,
+        totalWinningAmount: total,
+        canBePaid: ticket.status === 'sold' && total > 0,
+        lotteryName: first?.lottery?.name ?? '—',
+        drawTime: first?.draw?.drawTime ?? '—',
+        drawDate,
+      });
+    }
+    out.sort((a, b) => (b.drawDate ?? '').localeCompare(a.drawDate ?? '') || (a.lotteryName ?? '').localeCompare(b.lotteryName ?? '') || ((b.ticket.createdAt as Date)?.getTime?.() ?? 0) - ((a.ticket.createdAt as Date)?.getTime?.() ?? 0));
+    return out;
+  }
+
+  /**
+   * Agrupa filas de v_winning_ticket_lines por ticket, calcula isWinner por línea y montos, y arma la respuesta.
+   */
+  private async buildWinningTicketsOutput(
+    viewRows: Array<Record<string, unknown>>,
+    filterLotteryId?: string,
+    includeDrawDate = false,
+  ) {
+    const byTicket = new Map<string, Array<Record<string, unknown>>>();
+    for (const row of viewRows) {
+      const ticketId = row.ticket_id as string;
+      if (!ticketId) continue;
+      let arr = byTicket.get(ticketId);
+      if (!arr) {
+        arr = [];
+        byTicket.set(ticketId, arr);
+      }
+      arr.push(row);
+    }
+
+    const candidates: Array<{ ticketId: string; linesWithWinning: Array<Record<string, unknown>>; totalWinningAmount: number; lotteryName: string; drawTime: string; drawDate?: string }> = [];
+
+    for (const [ticketId, rows] of byTicket) {
+      const linesWithWinning: Array<Record<string, unknown>> = [];
+      let totalWinningAmount = 0;
+      let lotteryName = '—';
+      let drawTime = '—';
+      let drawDate: string | undefined;
+
+      for (const r of rows) {
+        const betType = (r.bet_type as BetType) ?? 'quiniela';
+        const numbers = (r.numbers as string) ?? '';
+        const resForDraw: DrawResultsApproved = {
+          primera: (r.result_primera as string) ?? '',
+          segunda: (r.result_segunda as string) ?? '',
+          tercera: (r.result_tercera as string) ?? '',
+        };
+        const isWinner = isLineWinner(betType, numbers, resForDraw);
+        const potentialPayout = Number(r.potential_payout) ?? 0;
+        const winningPayout = isWinner ? potentialPayout : 0;
+        totalWinningAmount += winningPayout;
+        if (r.lottery_name != null) lotteryName = String(r.lottery_name);
+        if (r.draw_time != null) drawTime = String(r.draw_time);
+        if (includeDrawDate && r.draw_date != null) drawDate = new Date(r.draw_date as Date).toISOString().slice(0, 10);
+        linesWithWinning.push({
+          id: r.line_id,
+          drawId: r.draw_id,
+          lotteryId: r.lottery_id,
+          betType,
+          numbers,
+          amount: r.amount,
+          potentialPayout: r.potential_payout,
+          lottery: { name: r.lottery_name },
+          draw: { drawTime: r.draw_time, drawDate: r.draw_date },
+          isWinner,
+          winningPayout,
+        });
+      }
+
+      if (totalWinningAmount <= 0) continue;
+      if (filterLotteryId && !rows.some((r) => r.lottery_id === filterLotteryId)) continue;
+
+      candidates.push({
+        ticketId,
+        linesWithWinning,
+        totalWinningAmount,
+        lotteryName,
+        drawTime,
+        drawDate,
+      });
+    }
+
+    const ticketIds = [...candidates.map((c) => c.ticketId)];
+    if (ticketIds.length === 0) return [];
+
+    const tickets = await this.prisma.ticket.findMany({
+      where: { id: { in: ticketIds } },
+      include: {
+        point: true,
+        seller: { select: { id: true, fullName: true } },
+        paidBy: { select: { id: true, fullName: true } },
+      },
+    });
+    const ticketMap = new Map(tickets.map((t) => [t.id, t]));
+
+    const out: Array<{
+      ticket: Record<string, unknown>;
+      linesWithWinning: Array<Record<string, unknown>>;
+      totalWinningAmount: number;
+      canBePaid: boolean;
+      lotteryName: string;
+      drawTime: string;
+      drawDate?: string;
+    }> = [];
+
+    for (const c of candidates) {
+      const ticket = ticketMap.get(c.ticketId);
+      if (!ticket) continue;
+      out.push({
+        ticket: {
+          id: ticket.id,
+          ticketCode: ticket.ticketCode,
+          ticketNumber: ticket.ticketNumber,
+          status: ticket.status,
+          totalAmount: ticket.totalAmount,
+          printedAt: ticket.printedAt,
+          paidAt: ticket.paidAt,
+          paidBy: ticket.paidBy,
+          point: ticket.point,
+          seller: ticket.seller,
+          createdAt: ticket.createdAt,
+        },
+        linesWithWinning: c.linesWithWinning,
+        totalWinningAmount: c.totalWinningAmount,
+        canBePaid: ticket.status === 'sold' && c.totalWinningAmount > 0,
+        lotteryName: c.lotteryName,
+        drawTime: c.drawTime,
+        ...(includeDrawDate && c.drawDate != null ? { drawDate: c.drawDate } : {}),
+      });
+    }
+
+    out.sort((a, b) => {
+      if (includeDrawDate) {
+        const da = (a as { drawDate?: string }).drawDate ?? '';
+        const db = (b as { drawDate?: string }).drawDate ?? '';
+        const d = da.localeCompare(db);
+        if (d !== 0) return -d;
+      }
+      const c = (a.lotteryName ?? '').localeCompare(b.lotteryName ?? '');
+      if (c !== 0) return c;
+      const ta = (a.ticket.createdAt as Date)?.getTime?.() ?? 0;
+      const tb = (b.ticket.createdAt as Date)?.getTime?.() ?? 0;
+      return includeDrawDate ? tb - ta : ta - tb;
+    });
+    return out;
   }
 
   /** Marcar ticket como pagado (cobro de premio). Solo si es ganador y no está ya pagado. */

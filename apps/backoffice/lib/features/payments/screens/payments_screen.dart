@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/app_shell.dart';
+import '../../lotteries/providers/lotteries_provider.dart';
 import '../providers/payments_provider.dart';
+
+String _today() => DateTime.now().toIso8601String().substring(0, 10);
 
 class PaymentsScreen extends ConsumerStatefulWidget {
   const PaymentsScreen({super.key});
@@ -11,49 +14,51 @@ class PaymentsScreen extends ConsumerStatefulWidget {
   ConsumerState<PaymentsScreen> createState() => _PaymentsScreenState();
 }
 
-class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
+class _PaymentsScreenState extends ConsumerState<PaymentsScreen> with SingleTickerProviderStateMixin {
   final _codeController = TextEditingController();
   String _searchCode = '';
   Map<String, dynamic>? _data;
   bool _loading = false;
   String? _error;
+  late TabController _tabController;
+  String _winnersDate = _today();
+  String? _winnersLotteryId;
+  String _historyFrom = _today();
+  String _historyTo = _today();
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
 
   @override
   void dispose() {
+    _tabController.dispose();
     _codeController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadTicketByCode(String code) async {
+    if (code.isEmpty) return;
+    setState(() { _loading = true; _error = null; _data = null; });
+    try {
+      final data = await getTicketForPayment(ref, code);
+      if (!mounted) return;
+      setState(() { _loading = false; _data = data; if (data == null) _error = 'Ticket no encontrado.'; });
+    } catch (e) {
+      if (mounted) setState(() { _loading = false; _error = 'Error: $e'; _data = null; });
+    }
   }
 
   Future<void> _search() async {
     final code = _codeController.text.trim();
     if (code.isEmpty) {
-      setState(() {
-        _error = 'Ingrese el código del ticket';
-        _data = null;
-      });
+      setState(() { _error = 'Ingrese el código del ticket'; _data = null; });
       return;
     }
-    setState(() {
-      _searchCode = code;
-      _loading = true;
-      _error = null;
-      _data = null;
-    });
-    try {
-      final data = await getTicketForPayment(ref, code);
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _data = data;
-        if (data == null) _error = 'Ticket no encontrado o error al buscar.';
-      });
-    } catch (e) {
-      if (mounted) setState(() {
-        _loading = false;
-        _error = 'Error: $e';
-        _data = null;
-      });
-    }
+    setState(() => _searchCode = code);
+    await _loadTicketByCode(code);
   }
 
   Future<void> _markAsPaid() async {
@@ -64,6 +69,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     try {
       final updated = await markTicketAsPaid(ref, id);
       if (!mounted) return;
+      ref.invalidate(winningTicketsProvider(WinnersQuery(date: _winnersDate, lotteryId: _winnersLotteryId)));
+      ref.invalidate(winningTicketsHistoryProvider(WinnersHistoryQuery(from: _historyFrom, to: _historyTo)));
       setState(() {
         _loading = false;
         _data = updated;
@@ -165,8 +172,201 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               loading: _loading,
             ),
           ],
+          const SizedBox(height: 24),
+          TabBar(
+            controller: _tabController,
+            labelColor: AppColors.primary,
+            tabs: const [
+              Tab(text: 'Ganadores del día'),
+              Tab(text: 'Historial'),
+            ],
+          ),
+          SizedBox(
+            height: 420,
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _WinnersTodayTab(
+                  date: _winnersDate,
+                  lotteryId: _winnersLotteryId,
+                  onDateChanged: (v) => setState(() => _winnersDate = v),
+                  onLotteryChanged: (v) => setState(() => _winnersLotteryId = v),
+                  onSelectTicket: (code) => _loadTicketByCode(code),
+                ),
+                _WinnersHistoryTab(
+                  from: _historyFrom,
+                  to: _historyTo,
+                  onFromChanged: (v) => setState(() => _historyFrom = v),
+                  onToChanged: (v) => setState(() => _historyTo = v),
+                  onSelectTicket: (code) => _loadTicketByCode(code),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _WinnersTodayTab extends ConsumerWidget {
+  const _WinnersTodayTab({
+    required this.date,
+    required this.lotteryId,
+    required this.onDateChanged,
+    required this.onLotteryChanged,
+    required this.onSelectTicket,
+  });
+  final String date;
+  final String? lotteryId;
+  final ValueChanged<String> onDateChanged;
+  final ValueChanged<String?> onLotteryChanged;
+  final ValueChanged<String> onSelectTicket;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lotteriesAsync = ref.watch(lotteriesListProvider);
+    final listAsync = ref.watch(winningTicketsProvider(WinnersQuery(date: date, lotteryId: lotteryId)));
+    final lotteries = lotteriesAsync.valueOrNull ?? [];
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            SizedBox(
+              width: 140,
+              child: TextFormField(
+                key: ValueKey(date),
+                initialValue: date,
+                decoration: const InputDecoration(labelText: 'Fecha', border: OutlineInputBorder(), isDense: true),
+                onChanged: onDateChanged,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: lotteryId?.isEmpty ?? true ? null : lotteryId,
+                decoration: const InputDecoration(labelText: 'Lotería', border: OutlineInputBorder(), isDense: true),
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('Todas')),
+                  ...lotteries.map((l) => DropdownMenuItem(value: l['id']?.toString(), child: Text(l['name']?.toString() ?? '—'))),
+                ],
+                onChanged: (v) => onLotteryChanged(v),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        listAsync.when(
+          data: (list) => _WinnersList(list: list, onSelectTicket: onSelectTicket),
+          loading: () => const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())),
+          error: (e, _) => Padding(padding: const EdgeInsets.all(16), child: Text('Error: $e', style: TextStyle(color: AppColors.danger))),
+        ),
+      ],
+    );
+  }
+}
+
+class _WinnersHistoryTab extends ConsumerWidget {
+  const _WinnersHistoryTab({
+    required this.from,
+    required this.to,
+    required this.onFromChanged,
+    required this.onToChanged,
+    required this.onSelectTicket,
+  });
+  final String from;
+  final String to;
+  final ValueChanged<String> onFromChanged;
+  final ValueChanged<String> onToChanged;
+  final ValueChanged<String> onSelectTicket;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final listAsync = ref.watch(winningTicketsHistoryProvider(WinnersHistoryQuery(from: from, to: to)));
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                key: ValueKey('from$from'),
+                initialValue: from,
+                decoration: const InputDecoration(labelText: 'Desde', border: OutlineInputBorder(), isDense: true),
+                onChanged: onFromChanged,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextFormField(
+                key: ValueKey('to$to'),
+                initialValue: to,
+                decoration: const InputDecoration(labelText: 'Hasta', border: OutlineInputBorder(), isDense: true),
+                onChanged: onToChanged,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        listAsync.when(
+          data: (list) => _WinnersList(list: list, onSelectTicket: onSelectTicket),
+          loading: () => const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator())),
+          error: (e, _) => Padding(padding: const EdgeInsets.all(16), child: Text('Error: $e', style: TextStyle(color: AppColors.danger))),
+        ),
+      ],
+    );
+  }
+}
+
+class _WinnersList extends StatelessWidget {
+  const _WinnersList({required this.list, required this.onSelectTicket});
+  final List<dynamic> list;
+  final ValueChanged<String> onSelectTicket;
+
+  @override
+  Widget build(BuildContext context) {
+    if (list.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text('No hay tickets ganadores en el rango.', style: TextStyle(color: AppColors.textMuted)),
+      );
+    }
+    return Table(
+      columnWidths: const {0: FlexColumnWidth(1.2), 1: FlexColumnWidth(1), 2: FlexColumnWidth(0.6), 3: FlexColumnWidth(0.8), 4: FlexColumnWidth(0.6)},
+      children: [
+        const TableRow(
+          children: [
+            Padding(padding: EdgeInsets.only(bottom: 8), child: Text('Código', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textMuted))),
+            Padding(padding: EdgeInsets.only(bottom: 8), child: Text('Lotería', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textMuted))),
+            Padding(padding: EdgeInsets.only(bottom: 8), child: Text('Sorteo', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textMuted))),
+            Padding(padding: EdgeInsets.only(bottom: 8), child: Text('Monto', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textMuted))),
+            Padding(padding: EdgeInsets.only(bottom: 8), child: Text('Estado', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textMuted))),
+          ],
+        ),
+        ...list.map<TableRow>((e) {
+          final item = e as Map<String, dynamic>;
+          final ticket = item['ticket'] as Map<String, dynamic>? ?? {};
+          final code = ticket['ticketCode'] ?? ticket['ticketNumber'] ?? '—';
+          final status = ticket['status'] as String? ?? '—';
+          final total = (item['totalWinningAmount'] as num?)?.toDouble() ?? 0;
+          return TableRow(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: InkWell(
+                  onTap: () => onSelectTicket(code.toString()),
+                  child: Text(code.toString(), style: const TextStyle(decoration: TextDecoration.underline)),
+                ),
+              ),
+              Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Text(item['lotteryName']?.toString() ?? '—')),
+              Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Text(item['drawTime']?.toString() ?? '—')),
+              Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Text('\$${total.toStringAsFixed(2)}')),
+              Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: _StatusChip(status: status)),
+            ],
+          );
+        }),
+      ],
     );
   }
 }
@@ -201,11 +401,48 @@ class _PaymentTicketCard extends StatelessWidget {
                 _StatusChip(status: status),
               ],
             ),
-            if (message != null && message.isNotEmpty) ...[
+            if (status == 'paid') ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.warning, width: 1),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.block, color: AppColors.warning, size: 24),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('Este ticket ya fue cobrado', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.warning)),
+                          Text('No se puede pagar de nuevo en otro punto.', style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                          if (paidAt != null || paidBy != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                paidAt != null ? 'Cobrado: ${paidAt.toString().substring(0, 19)}' : '',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
+                              ),
+                            ),
+                          if (paidBy != null && paidBy['fullName'] != null)
+                            Text('Por: ${paidBy['fullName']}', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.textMuted)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ] else if (message != null && message.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(message, style: TextStyle(color: AppColors.warning, fontWeight: FontWeight.w500)),
             ],
-            if (paidAt != null || paidBy != null) ...[
+            if (status != 'paid' && (paidAt != null || paidBy != null)) ...[
               const SizedBox(height: 8),
               Text(
                 'Pagado${paidAt != null ? ' · ${paidAt.toString().substring(0, 19)}' : ''}${paidBy != null ? ' por ${paidBy['fullName'] ?? '—'}' : ''}',

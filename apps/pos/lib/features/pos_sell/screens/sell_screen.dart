@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/http/api_client.dart';
+import '../../../core/printer/printer_provider.dart';
+import '../../../core/printer/printer_service.dart';
 import '../../../core/session/pos_session.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/server_time/server_time_provider.dart';
@@ -631,6 +633,30 @@ class _SellScreenState extends ConsumerState<SellScreen> {
       ref.read(clearSellFormAfterPaymentProvider.notifier).state = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(() { _lines.clear(); _error = null; });
+      });
+    }
+    final pendingPrint = ref.watch(pendingPrintTicketProvider);
+    if (pendingPrint != null) {
+      ref.read(pendingPrintTicketProvider.notifier).state = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        final selected = ref.read(selectedPrinterProvider);
+        final paperMm = ref.read(printerPaperWidthMmProvider);
+        final ok = selected != null
+            ? await sendTicketToPrinter(pendingPrint, selected, paperWidthMm: paperMm)
+            : false;
+        if (!mounted) return;
+        // Después de imprimir: iniciar nueva transacción (limpiar carrito y formulario). La data del ticket ya está guardada en el backend.
+        ref.read(sellCartProvider.notifier).clear();
+        ref.read(clearSellFormAfterPaymentProvider.notifier).state = true;
+        if (mounted) setState(() { _lines.clear(); _error = null; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              ok ? 'Ticket impreso. Nueva venta lista.' : 'Ticket guardado. Configure impresora en menú para imprimir. Nueva venta lista.',
+            ),
+          ),
+        );
       });
     }
     final sessionAsync = ref.watch(posSessionProvider);

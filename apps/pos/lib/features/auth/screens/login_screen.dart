@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/http/api_client.dart';
+import '../../../core/inactivity/inactivity_provider.dart';
 import '../../../core/server_time/server_time_provider.dart';
 import '../../../core/session/app_session.dart';
 import '../../../core/session/pos_session.dart';
@@ -171,6 +172,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final logoutReason = ref.watch(logoutReasonProvider);
+    if (logoutReason == 'inactivity') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(logoutReasonProvider.notifier).state = null;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Sesión cerrada por inactividad (5 min). Inicie sesión nuevamente.'),
+              backgroundColor: AppColors.warning,
+            ),
+          );
+        }
+      });
+    }
     final inputDec = InputDecoration(
       labelText: 'URL del servidor',
       hintText: 'http://187.124.81.201:3000',

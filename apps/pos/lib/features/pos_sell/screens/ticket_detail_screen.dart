@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:thermal_printer_plus/thermal_printer.dart';
 import '../../../core/http/api_client.dart';
 import '../../../core/printer/printer_provider.dart';
 import '../../../core/printer/printer_service.dart';
@@ -42,31 +41,12 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
       _printMessage = null;
     });
     try {
-      final bytes = await buildTicketBytes(_ticket!);
-      final connected = await PrinterManager.instance.connect(
-        type: PrinterType.bluetooth,
-        model: BluetoothPrinterInput(
-          address: selected.address!,
-          name: selected.name,
-          isBle: false,
-          autoConnect: false,
-        ),
-      );
-      if (!connected && mounted) {
-        setState(() {
-          _printing = false;
-          _printMessage = 'No se pudo conectar a la impresora.';
-        });
-        return;
-      }
-      final ok = await PrinterManager.instance.send(
-        type: PrinterType.bluetooth,
-        bytes: bytes,
-      );
+      final paperMm = ref.read(printerPaperWidthMmProvider);
+      final ok = await sendTicketToPrinter(_ticket!, selected, paperWidthMm: paperMm);
       if (mounted) {
         setState(() {
           _printing = false;
-          _printMessage = ok ? 'Impreso correctamente' : 'Error al enviar a la impresora';
+          _printMessage = ok ? 'Impreso correctamente' : 'No se pudo imprimir. Conecte de nuevo en Configurar impresora.';
         });
       }
     } catch (e) {

@@ -27,3 +27,45 @@ Future<Map<String, dynamic>?> markTicketAsPaid(WidgetRef ref, String ticketId) a
     return null;
   }
 }
+
+/// Parámetros para listar tickets ganadores del día. [date] YYYY-MM-DD, [lotteryId] opcional.
+class WinnersQuery {
+  const WinnersQuery({required this.date, this.lotteryId});
+  final String date;
+  final String? lotteryId;
+}
+
+/// Lista tickets ganadores para una fecha (y opcionalmente por lotería).
+final winningTicketsProvider = FutureProvider.family<List<dynamic>, WinnersQuery>((ref, q) async {
+  final api = ref.watch(apiClientProvider);
+  final uri = q.lotteryId != null && q.lotteryId!.isNotEmpty
+      ? '/tickets/winners?date=${Uri.encodeComponent(q.date)}&lotteryId=${Uri.encodeComponent(q.lotteryId!)}'
+      : '/tickets/winners?date=${Uri.encodeComponent(q.date)}';
+  final resp = await api.get(uri);
+  if (resp.statusCode != 200) return [];
+  try {
+    return List<dynamic>.from(jsonDecode(resp.body) as List);
+  } catch (_) {
+    return [];
+  }
+});
+
+/// Parámetros para historial de ganadores.
+class WinnersHistoryQuery {
+  const WinnersHistoryQuery({required this.from, required this.to});
+  final String from;
+  final String to;
+}
+
+/// Lista tickets ganadores en rango de fechas (historial).
+final winningTicketsHistoryProvider = FutureProvider.family<List<dynamic>, WinnersHistoryQuery>((ref, q) async {
+  final api = ref.watch(apiClientProvider);
+  final uri = '/tickets/winners/history?from=${Uri.encodeComponent(q.from)}&to=${Uri.encodeComponent(q.to)}';
+  final resp = await api.get(uri);
+  if (resp.statusCode != 200) return [];
+  try {
+    return List<dynamic>.from(jsonDecode(resp.body) as List);
+  } catch (_) {
+    return [];
+  }
+});

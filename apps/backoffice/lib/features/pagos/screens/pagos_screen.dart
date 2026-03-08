@@ -5,22 +5,24 @@ import '../../../core/widgets/app_shell.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/pagos_provider.dart';
 
-const _betTypes = ['quiniela', 'pale', 'tripleta', 'superpale'];
-
-String _betTypeLabel(String bt) {
-  switch (bt) {
-    case 'quiniela':
-      return 'Quiniela';
-    case 'pale':
-      return 'Palé';
-    case 'tripleta':
-      return 'Tripleta';
-    case 'superpale':
-      return 'Superpalé';
-    default:
-      return bt;
-  }
+/// Filas fijas de la tabla: tipo + variante con etiqueta y clave para API.
+class _PriceRow {
+  const _PriceRow(this.betType, this.variant, this.label);
+  final String betType;
+  final String variant;
+  final String label;
 }
+
+const _priceRows = [
+  _PriceRow('quiniela', '', 'Quiniela'),
+  _PriceRow('pale', '1_2', 'Palé 1ra y 2da'),
+  _PriceRow('pale', '2_3', 'Palé 2da y 3ra'),
+  _PriceRow('tripleta', '1_2', 'Tripleta 1ra y 2da'),
+  _PriceRow('tripleta', '2', 'Tripleta 2 aciertos'),
+  _PriceRow('superpale', '', 'Superpalé'),
+];
+
+String _rowKey(String betType, String variant) => '$betType|${variant.isEmpty ? '' : variant}';
 
 class PagosScreen extends ConsumerWidget {
   const PagosScreen({super.key});
@@ -93,13 +95,15 @@ class _PagosTableState extends ConsumerState<_PagosTable> {
 
   void _fillControllers(List<dynamic> list) {
     final map = list.cast<Map<String, dynamic>>();
-    for (final bt in _betTypes) {
-      final rows = map.where((e) => e['betType'] == bt).toList();
-      final row = rows.isEmpty ? null : rows.first as Map<String, dynamic>;
-      final mult = row?['multiplier'];
+    for (final row in _priceRows) {
+      final key = _rowKey(row.betType, row.variant);
+      final match = map.where((e) =>
+          e['betType'] == row.betType && (e['variant'] ?? '').toString() == row.variant).toList();
+      final first = match.isEmpty ? null : match.first as Map<String, dynamic>;
+      final mult = first?['multiplier'];
       final str = mult != null ? (mult is num ? mult.toString() : mult.toString()) : '';
-      _controllers[bt] ??= TextEditingController(text: str);
-      _controllers[bt]!.text = str;
+      _controllers[key] ??= TextEditingController(text: str);
+      _controllers[key]!.text = str;
     }
   }
 
@@ -142,11 +146,12 @@ class _PagosTableState extends ConsumerState<_PagosTable> {
                     Padding(padding: EdgeInsets.only(bottom: 8), child: Text('', style: TextStyle(fontWeight: FontWeight.bold))),
                   ],
                 ),
-                ..._betTypes.map<TableRow>((bt) {
-                  final ctrl = _controllers[bt];
+                ..._priceRows.map<TableRow>((row) {
+                  final key = _rowKey(row.betType, row.variant);
+                  final ctrl = _controllers[key];
                   return TableRow(
                     children: [
-                      Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text(_betTypeLabel(bt))),
+                      Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text(row.label)),
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: TextField(
@@ -162,7 +167,7 @@ class _PagosTableState extends ConsumerState<_PagosTable> {
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: FilledButton(
-                          onPressed: () => _save(context, bt),
+                          onPressed: () => _save(context, row.betType, row.variant),
                           child: const Text('Guardar'),
                         ),
                       ),
@@ -177,15 +182,16 @@ class _PagosTableState extends ConsumerState<_PagosTable> {
     );
   }
 
-  Future<void> _save(BuildContext context, String betType) async {
-    final ctrl = _controllers[betType];
+  Future<void> _save(BuildContext context, String betType, String variant) async {
+    final key = _rowKey(betType, variant);
+    final ctrl = _controllers[key];
     if (ctrl == null) return;
     final mult = double.tryParse(ctrl.text.trim().replaceAll(',', '.'));
     if (mult == null || mult < 0) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ingrese un precio válido (número ≥ 0).')));
       return;
     }
-    final success = await updatePayout(ref, betType, mult);
+    final success = await updatePayout(ref, betType, variant, mult);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(success ? 'Guardado.' : 'Error al guardar.')));
   }

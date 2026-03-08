@@ -73,24 +73,48 @@ class _PrinterSetupScreenState extends ConsumerState<PrinterSetupScreen> {
         autoConnect: false,
       ),
     );
-    if (mounted) {
-      if (connected) {
-        ref.read(selectedPrinterProvider.notifier).state = device;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('Conectado: ${device.name} (${device.address})')),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo conectar. Intente de nuevo.')),
-        );
-      }
+    if (!mounted) return;
+    if (!connected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo conectar. Intente de nuevo.')),
+      );
+      return;
     }
+    // Pedir ancho de papel para ajustar la impresión
+    final paperMm = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ancho de papel'),
+        content: const Text(
+          'Seleccione el ancho del rollo de su impresora para que el ticket se ajuste correctamente.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(58),
+            child: const Text('58 mm'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(80),
+            child: const Text('80 mm'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    final width = paperMm ?? 80;
+    ref.read(selectedPrinterProvider.notifier).state = device;
+    ref.read(printerPaperWidthMmProvider.notifier).state = width;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Conectado: ${device.name} · Papel $width mm'),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final selected = ref.watch(selectedPrinterProvider);
+    final paperMm = ref.watch(printerPaperWidthMmProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Configurar impresora')),
@@ -121,6 +145,9 @@ class _PrinterSetupScreenState extends ConsumerState<PrinterSetupScreen> {
                           Text(selected.name,
                               style: const TextStyle(
                                   fontWeight: FontWeight.w600)),
+                          Text('Papel: ${paperMm}mm',
+                              style: TextStyle(
+                                  color: AppColors.textMuted, fontSize: 12)),
                         ],
                       ),
                     ),
