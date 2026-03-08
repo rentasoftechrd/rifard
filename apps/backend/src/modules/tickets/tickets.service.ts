@@ -384,15 +384,17 @@ export class TicketsService {
     }
   }
 
-  /** Fallback sin vista: lista ganadores por fecha con Prisma. */
+  /** Fallback sin vista: lista ganadores por fecha. Usa comparación DATE en SQL para evitar timezone. */
   private async getWinningTicketsLegacy(date: string, lotteryId?: string) {
-    const start = new Date(date + 'T00:00:00.000Z');
-    const end = new Date(date + 'T23:59:59.999Z');
-    const draws = await this.prisma.draw.findMany({
-      where: { drawDate: { gte: start, lte: end }, drawResult: { status: 'approved' } },
-      select: { id: true, lotteryId: true, drawTime: true, lottery: { select: { name: true } } },
-    });
-    const drawIds = draws.map((d) => d.id);
+    let drawIds: string[];
+    try {
+      const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`SELECT d.id FROM draws d INNER JOIN draw_results dr ON dr.draw_id = d.id AND dr.status = 'approved' WHERE d.draw_date = ${date}::date`,
+      );
+      drawIds = rows.map((r) => r.id);
+    } catch {
+      return [];
+    }
     if (drawIds.length === 0) return [];
     const ticketIds = await this.prisma.ticketLine.findMany({
       where: { drawId: { in: drawIds }, ticket: { status: { not: 'voided' } } },
@@ -436,15 +438,17 @@ export class TicketsService {
     return out;
   }
 
-  /** Fallback sin vista: historial de ganadores con Prisma. */
+  /** Fallback sin vista: historial de ganadores. Comparación DATE en SQL. */
   private async getWinningTicketsHistoryLegacy(from: string, to: string) {
-    const fromD = new Date(from + 'T00:00:00.000Z');
-    const toD = new Date(to + 'T23:59:59.999Z');
-    const draws = await this.prisma.draw.findMany({
-      where: { drawDate: { gte: fromD, lte: toD }, drawResult: { status: 'approved' } },
-      select: { id: true, drawTime: true, drawDate: true, lottery: { select: { name: true } } },
-    });
-    const drawIds = draws.map((d) => d.id);
+    let drawIds: string[];
+    try {
+      const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(
+        Prisma.sql`SELECT d.id FROM draws d INNER JOIN draw_results dr ON dr.draw_id = d.id AND dr.status = 'approved' WHERE d.draw_date >= ${from}::date AND d.draw_date <= ${to}::date`,
+      );
+      drawIds = rows.map((r) => r.id);
+    } catch {
+      return [];
+    }
     if (drawIds.length === 0) return [];
     const ticketIds = await this.prisma.ticketLine.findMany({
       where: { drawId: { in: drawIds }, ticket: { status: { not: 'voided' } } },

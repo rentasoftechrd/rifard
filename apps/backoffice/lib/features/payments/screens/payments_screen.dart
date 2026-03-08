@@ -329,7 +329,14 @@ class _WinnersList extends StatelessWidget {
     if (list.isEmpty) {
       return Padding(
         padding: const EdgeInsets.all(24),
-        child: Text('No hay tickets ganadores en el rango.', style: TextStyle(color: AppColors.textMuted)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('No hay tickets ganadores para esta fecha o rango.', style: TextStyle(color: AppColors.textMuted, fontWeight: FontWeight.w500)),
+            const SizedBox(height: 8),
+            Text('Compruebe que existan sorteos con resultados aprobados para la fecha seleccionada.', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          ],
+        ),
       );
     }
     return Table(

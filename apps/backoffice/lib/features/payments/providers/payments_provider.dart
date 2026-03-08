@@ -41,10 +41,13 @@ final winningTicketsProvider = FutureProvider.family<List<dynamic>, WinnersQuery
   final uri = q.lotteryId != null && q.lotteryId!.isNotEmpty
       ? '/tickets/winners?date=${Uri.encodeComponent(q.date)}&lotteryId=${Uri.encodeComponent(q.lotteryId!)}'
       : '/tickets/winners?date=${Uri.encodeComponent(q.date)}';
-  final resp = await api.get(uri);
-  if (resp.statusCode != 200) return [];
   try {
-    return List<dynamic>.from(jsonDecode(resp.body) as List);
+    final resp = await api.get(uri).timeout(const Duration(seconds: 15));
+    if (resp.statusCode != 200) return [];
+    if (resp.body.isEmpty) return [];
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return [];
+    return List<dynamic>.from(decoded);
   } catch (_) {
     return [];
   }
@@ -61,10 +64,13 @@ class WinnersHistoryQuery {
 final winningTicketsHistoryProvider = FutureProvider.family<List<dynamic>, WinnersHistoryQuery>((ref, q) async {
   final api = ref.watch(apiClientProvider);
   final uri = '/tickets/winners/history?from=${Uri.encodeComponent(q.from)}&to=${Uri.encodeComponent(q.to)}';
-  final resp = await api.get(uri);
-  if (resp.statusCode != 200) return [];
   try {
-    return List<dynamic>.from(jsonDecode(resp.body) as List);
+    final resp = await api.get(uri).timeout(const Duration(seconds: 15));
+    if (resp.statusCode != 200) return [];
+    if (resp.body.isEmpty) return [];
+    final decoded = jsonDecode(resp.body);
+    if (decoded is! List) return [];
+    return List<dynamic>.from(decoded);
   } catch (_) {
     return [];
   }
