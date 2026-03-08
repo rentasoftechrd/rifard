@@ -309,10 +309,12 @@ model LimitConfig {
 
 model PayoutConfig {
   id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  betType    BetType  @unique @map("bet_type")
-  multiplier Decimal @map("multiplier") @db.Decimal(12, 2)
+  betType    BetType  @map("bet_type")
+  variant    String   @default("") @map("variant") // "" = único; pale: "1_2"|"2_3"; tripleta: "1_2"|"2"
+  multiplier Decimal  @map("multiplier") @db.Decimal(12, 2)
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
+  @@unique([betType, variant])
   @@map("payout_config")
 }
 

@@ -21,9 +21,10 @@ export class PayoutsController {
 
   @Put()
   @Roles(ROLE_ADMIN, ROLE_SUPER_ADMIN)
-  @ApiOperation({ summary: 'Update payout multiplier for a bet type' })
-  upsert(@Body() body: { betType: string; multiplier: number }) {
+  @ApiOperation({ summary: 'Update payout multiplier for a bet type (and optional variant)' })
+  upsert(@Body() body: { betType: string; variant?: string; multiplier: number }) {
     const betType = body.betType as 'quiniela' | 'pale' | 'tripleta' | 'superpale';
-    return this.payouts.upsert(betType, body.multiplier);
+    const variant = typeof body.variant === 'string' ? body.variant : '';
+    return this.payouts.upsert(betType, variant, body.multiplier);
   }
 }
