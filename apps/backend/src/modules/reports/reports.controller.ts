@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -53,5 +53,29 @@ export class ReportsController {
   @ApiOperation({ summary: 'Exposure for draw' })
   exposure(@Query('drawId') drawId: string) {
     return this.reports.exposure(drawId);
+  }
+
+  @Get('points-stats')
+  @ApiOperation({ summary: 'Stats per point (sold, paid, voided) in date range' })
+  pointStats(@Query('from') from: string, @Query('to') to: string) {
+    const today = new Date().toISOString().slice(0, 10);
+    const fromD = from?.trim() || today;
+    const toD = to?.trim() || today;
+    return this.reports.pointStats(fromD, toD);
+  }
+
+  @Get('points-stats/:pointId')
+  @ApiOperation({ summary: 'Detail stats for one point + recent tickets' })
+  async pointStatsDetail(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Param('pointId') pointId: string,
+  ) {
+    const today = new Date().toISOString().slice(0, 10);
+    const fromD = from?.trim() || today;
+    const toD = to?.trim() || today;
+    const result = await this.reports.pointStatsDetail(pointId, fromD, toD);
+    if (result == null) throw new NotFoundException('Punto no encontrado');
+    return result;
   }
 }

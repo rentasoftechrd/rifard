@@ -222,6 +222,131 @@ export class ReportsService {
     return { date: safeDateStr, count: tickets.length, totalAmount: totalVoided, tickets };
   }
 
+  /** Estadísticas por punto de venta en un rango de fechas: vendido, pagado, anulado. */
+  async pointStats(fromStr: string, toStr: string) {
+    const from = new Date(fromStr + 'T00:00:00.000Z');
+    const to = new Date(toStr + 'T23:59:59.999Z');
+    const points = await this.prisma.posPoint.findMany({
+      where: { active: true },
+      select: { id: true, name: true, code: true },
+      orderBy: { name: 'asc' },
+    });
+    const result = await Promise.all(
+      points.map(async (point) => {
+        const [sold, paid, voided] = await Promise.all([
+          this.prisma.ticket.aggregate({
+            where: {
+              pointId: point.id,
+              status: TicketStatus.sold,
+              createdAt: { gte: from, lte: to },
+            },
+            _count: true,
+            _sum: { totalAmount: true },
+          }),
+          this.prisma.ticket.aggregate({
+            where: {
+              pointId: point.id,
+              status: TicketStatus.paid,
+              paidAt: { gte: from, lte: to },
+            },
+            _count: true,
+            _sum: { totalAmount: true },
+          }),
+          this.prisma.ticket.aggregate({
+            where: {
+              pointId: point.id,
+              status: TicketStatus.voided,
+              voidedAt: { gte: from, lte: to },
+            },
+            _count: true,
+            _sum: { totalAmount: true },
+          }),
+        ]);
+        return {
+          pointId: point.id,
+          pointName: point.name,
+          pointCode: point.code,
+          sold: { count: sold._count, totalAmount: Number(sold._sum?.totalAmount ?? 0) },
+          paid: { count: paid._count, totalAmount: Number(paid._sum?.totalAmount ?? 0) },
+          voided: { count: voided._count, totalAmount: Number(voided._sum?.totalAmount ?? 0) },
+        };
+      }),
+    );
+    return { from: fromStr, to: toStr, points: result };
+  }
+
+  /** Detalle de estadísticas de un punto en un rango de fechas. Incluye últimas ventas/anulaciones. */
+  async pointStatsDetail(pointId: string, fromStr: string, toStr: string) {
+    const from = new Date(fromStr + 'T00:00:00.000Z');
+    const to = new Date(toStr + 'T23:59:59.999Z');
+    const point = await this.prisma.posPoint.findUnique({
+      where: { id: pointId },
+      select: { id: true, name: true, code: true, address: true },
+    });
+    if (!point) return null;
+    const [sold, paid, voided, recentTickets] = await Promise.all([
+      this.prisma.ticket.aggregate({
+        where: {
+          pointId,
+          status: TicketStatus.sold,
+          createdAt: { gte: from, lte: to },
+        },
+        _count: true,
+        _sum: { totalAmount: true },
+      }),
+      this.prisma.ticket.aggregate({
+        where: {
+          pointId,
+          status: TicketStatus.paid,
+          paidAt: { gte: from, lte: to },
+        },
+        _count: true,
+        _sum: { totalAmount: true },
+      }),
+      this.prisma.ticket.aggregate({
+        where: {
+          pointId,
+          status: TicketStatus.voided,
+          voidedAt: { gte: from, lte: to },
+        },
+        _count: true,
+        _sum: { totalAmount: true },
+      }),
+      this.prisma.ticket.findMany({
+        where: {
+          pointId,
+          OR: [
+            { createdAt: { gte: from, lte: to } },
+            { voidedAt: { gte: from, lte: to } },
+            { paidAt: { gte: from, lte: to } },
+          ],
+        },
+        include: { seller: { select: { fullName: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+    ]);
+    return {
+      from: fromStr,
+      to: toStr,
+      point: { id: point.id, name: point.name, code: point.code, address: point.address },
+      sold: { count: sold._count, totalAmount: Number(sold._sum?.totalAmount ?? 0) },
+      paid: { count: paid._count, totalAmount: Number(paid._sum?.totalAmount ?? 0) },
+      voided: { count: voided._count, totalAmount: Number(voided._sum?.totalAmount ?? 0) },
+      recentTickets: recentTickets.map((t) => ({
+        id: t.id,
+        ticketCode: t.ticketCode,
+        ticketNumber: t.ticketNumber,
+        status: t.status,
+        totalAmount: t.totalAmount,
+        createdAt: t.createdAt,
+        voidedAt: t.voidedAt,
+        paidAt: t.paidAt,
+        seller: t.seller?.fullName,
+      })),
+    };
+  }
+
   async exposure(drawId: string) {
     const lines = await this.prisma.ticketLine.findMany({
       where: { drawId, ticket: { status: { not: TicketStatus.voided } } },
