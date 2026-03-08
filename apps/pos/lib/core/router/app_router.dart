@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../inactivity/inactivity_wrapper.dart';
 import '../../features/auth/providers/auth_provider.dart';
 import '../../features/home/screens/home_screen.dart';
 import '../../features/pos_sell/screens/sell_screen.dart';
@@ -34,22 +35,30 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       );
     },
     routes: [
-      GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
-      GoRoute(path: '/home', builder: (_, __) => const HomeScreen()),
-      GoRoute(path: '/select-point', builder: (_, __) => const SelectPointScreen()),
-      GoRoute(path: '/printer-setup', builder: (_, __) => const PrinterSetupScreen()),
-      GoRoute(path: '/payments', builder: (_, __) => const PaymentsScreen()),
-      GoRoute(path: '/payment', builder: (_, __) => const CheckoutScreen()),
-      GoRoute(
-        path: '/sell',
-        builder: (_, __) => const SellScreen(),
+      ShellRoute(
+        builder: (context, state, child) {
+          if (state.matchedLocation == '/login') return child;
+          return InactivityWrapper(child: child);
+        },
         routes: [
-          GoRoute(path: 'ticket/:code', builder: (_, state) => TicketDetailScreen(code: state.pathParameters['code']!)),
+          GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+          GoRoute(path: '/home', builder: (_, __) => const HomeScreen()),
+          GoRoute(path: '/select-point', builder: (_, __) => const SelectPointScreen()),
+          GoRoute(path: '/printer-setup', builder: (_, __) => const PrinterSetupScreen()),
+          GoRoute(path: '/payments', builder: (_, __) => const PaymentsScreen()),
+          GoRoute(path: '/payment', builder: (_, __) => const CheckoutScreen()),
+          GoRoute(
+            path: '/sell',
+            builder: (_, __) => const SellScreen(),
+            routes: [
+              GoRoute(path: 'ticket/:code', builder: (_, state) => TicketDetailScreen(code: state.pathParameters['code']!)),
+            ],
+          ),
+          GoRoute(path: '/history', builder: (_, __) => const HistoryScreen()),
+          GoRoute(path: '/void', builder: (_, __) => const VoidScreen()),
+          GoRoute(path: '/closeout', builder: (_, __) => const CloseoutScreen()),
         ],
       ),
-      GoRoute(path: '/history', builder: (_, __) => const HistoryScreen()),
-      GoRoute(path: '/void', builder: (_, __) => const VoidScreen()),
-      GoRoute(path: '/closeout', builder: (_, __) => const CloseoutScreen()),
     ],
   );
 });

@@ -7,18 +7,25 @@ import '../../auth/providers/auth_provider.dart';
 /// Respuesta: { online: [...], offline: [...] }. Online = lastSeenAt dentro del umbral (ej. 60s).
 Future<Map<String, dynamic>> fetchPosConnected(Ref ref) async {
   final api = ref.read(apiClientProvider);
-  final resp = await api.get('/pos/connected');
-  if (resp.statusCode != 200) {
-    return {'online': <dynamic>[], 'offline': <dynamic>[], 'error': true};
-  }
   try {
+    final resp = await api.get('/pos/connected');
+    if (resp.statusCode != 200) {
+      String msg = 'Error ${resp.statusCode}';
+      if (resp.body.isNotEmpty) {
+        try {
+          final m = jsonDecode(resp.body) as Map<String, dynamic>?;
+          if (m != null && m['message'] != null) msg = m['message'].toString();
+        } catch (_) {}
+      }
+      return {'online': <dynamic>[], 'offline': <dynamic>[], 'error': true, 'errorMessage': msg};
+    }
     final map = jsonDecode(resp.body) as Map<String, dynamic>;
     return {
       'online': map['online'] as List<dynamic>? ?? [],
       'offline': map['offline'] as List<dynamic>? ?? [],
     };
-  } catch (_) {
-    return {'online': <dynamic>[], 'offline': <dynamic>[], 'error': true};
+  } catch (e) {
+    return {'online': <dynamic>[], 'offline': <dynamic>[], 'error': true, 'errorMessage': e.toString()};
   }
 }
 

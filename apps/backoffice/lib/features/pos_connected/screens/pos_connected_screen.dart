@@ -66,6 +66,7 @@ class _PosConnectedScreenState extends ConsumerState<PosConnectedScreen> {
               final offline = data['offline'] as List<dynamic>? ?? [];
               final total = online.length + offline.length;
               final hasError = data['error'] == true;
+              final errorMessage = data['errorMessage']?.toString();
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -122,7 +123,18 @@ class _PosConnectedScreenState extends ConsumerState<PosConnectedScreen> {
                             children: [
                               Icon(Icons.error_outline, color: AppColors.danger),
                               const SizedBox(width: 12),
-                              Text('Error al cargar. Reintente.', style: TextStyle(color: AppColors.danger)),
+                              Expanded(
+                                child: Text(
+                                  errorMessage != null && errorMessage.isNotEmpty
+                                      ? 'Error al cargar: $errorMessage'
+                                      : 'Error al cargar. Reintente.',
+                                  style: TextStyle(color: AppColors.danger),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => ref.invalidate(posConnectedProvider),
+                                child: const Text('Reintentar'),
+                              ),
                             ],
                           ),
                         ),
